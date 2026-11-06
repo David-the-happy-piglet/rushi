@@ -1,0 +1,10 @@
+__pycache__/
+*.pyc
+*.egg-info/
+workspace/
+ws/
+data/raw/
+*.db
+exports/
+.env
+.venv/

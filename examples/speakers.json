@@ -1,0 +1,6 @@
+{
+  "target": ["阿泽"],
+  "others": {"小北": "close_friend"},
+  "default_relation": "unknown",
+  "aliases": {"小北": "朋友A", "老张": "伴侣"}
+}

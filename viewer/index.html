@@ -1,0 +1,67 @@
+<!doctype html>
+<html lang="zh"><head><meta charset="utf-8"><title>如是 · 人格图谱查看器</title>
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<style>
+:root{--bg:#f7f6f2;--fg:#1f1f1f;--muted:#777;--card:#fff;--line:#ddd;--accent:#8a5a2b;color-scheme:light dark}
+@media (prefers-color-scheme:dark){:root{--bg:#141414;--fg:#e8e6e1;--muted:#999;--card:#1e1e1e;--line:#333;--accent:#d9a066}}
+body{margin:0;background:var(--bg);color:var(--fg);font:14px/1.5 -apple-system,"PingFang SC","Noto Sans CJK SC",sans-serif}
+header{padding:12px 16px;border-bottom:1px solid var(--line);display:flex;gap:12px;align-items:center;flex-wrap:wrap}
+main{display:grid;grid-template-columns:1fr 1fr;gap:0;height:calc(100vh - 58px)}
+@media (max-width:900px){main{grid-template-columns:1fr;height:auto}}
+#canvas{width:100%;height:100%;background:var(--bg)}
+#side{overflow:auto;padding:12px 16px;border-left:1px solid var(--line)}
+.dim{margin:10px 0 4px;font-weight:600;color:var(--accent)}
+.claim{background:var(--card);border:1px solid var(--line);border-radius:8px;padding:8px 10px;margin:6px 0}
+.meta{color:var(--muted);font-size:12px}.quote{color:var(--muted);font-size:12px;margin-top:4px}
+.tag{display:inline-block;font-size:11px;padding:0 6px;border:1px solid var(--line);border-radius:10px;margin-left:4px}
+.con{border-color:#c0392b}
+input,select{font:inherit}
+</style></head><body>
+<header><strong>如是 · 图谱查看器</strong>
+<input type="file" id="file" accept=".json"> <span class="meta">选择 workspace/exports/graph.json（纯本地，不上传）</span>
+<select id="filter"><option value="">全部维度</option></select>
+<label><input type="checkbox" id="showRejected"> 显示已驳回</label></header>
+<main><canvas id="canvas"></canvas><div id="side"><p class="meta">载入文件后，左侧是节点图（可拖动），右侧按维度列出观察、证据和矛盾。</p></div></main>
+<script>
+const DIM={A:"身份与背景",B:"人生时间线",C:"价值观与优先级",D:"世界观与立场",E:"道德判断",F:"人际关系模式",G:"感情观",H:"工作、金钱与风险",I:"兴趣与审美",J:"童年与形成性经历（敏感）",K:"压力与情绪",L:"认知与决策风格",M:"自我认知与叙事",N:"恐惧与渴望",O:"幽默与表达",P:"矛盾与两难",Q:"变化轨迹"};
+let G=null, nodes=[], links=[], drag=null;
+const canvas=document.getElementById('canvas'), ctx=canvas.getContext('2d');
+const sel=document.getElementById('filter'); for(const k in DIM){const o=document.createElement('option');o.value=k;o.textContent=k+' '+DIM[k];sel.appendChild(o)}
+document.getElementById('file').addEventListener('change',async e=>{G=JSON.parse(await e.target.files[0].text());build();render()});
+sel.addEventListener('change',()=>{build();render()}); document.getElementById('showRejected').addEventListener('change',render);
+function build(){
+  const f=sel.value; const byId={};
+  nodes=G.nodes.filter(n=>!f||n.type!=='Observation'||n.attrs.dimension===f).map((n,i)=>{const o={...n,x:Math.random()*canvas.width,y:Math.random()*canvas.height,vx:0,vy:0};byId[n.id]=o;return o});
+  links=G.edges.filter(e=>byId[e.from_id]&&byId[e.to_id]).map(e=>({s:byId[e.from_id],t:byId[e.to_id],rel:e.rel,closed:!!e.valid_to||!!e.invalidated_by}));
+  resize(); for(let i=0;i<200;i++)step();
+}
+function resize(){const r=canvas.getBoundingClientRect();canvas.width=r.width*devicePixelRatio;canvas.height=r.height*devicePixelRatio;ctx.setTransform(devicePixelRatio,0,0,devicePixelRatio,0,0)}
+function step(){const W=canvas.width/devicePixelRatio,H=canvas.height/devicePixelRatio;
+  for(const a of nodes){for(const b of nodes){if(a===b)continue;let dx=a.x-b.x,dy=a.y-b.y,d2=dx*dx+dy*dy+0.01,f=1200/d2;a.vx+=dx*f/Math.sqrt(d2);a.vy+=dy*f/Math.sqrt(d2)}
+    a.vx+=(W/2-a.x)*0.002;a.vy+=(H/2-a.y)*0.002}
+  for(const l of links){let dx=l.t.x-l.s.x,dy=l.t.y-l.s.y,d=Math.sqrt(dx*dx+dy*dy)+0.01,f=(d-90)*0.01;l.s.vx+=dx/d*f;l.s.vy+=dy/d*f;l.t.vx-=dx/d*f;l.t.vy-=dy/d*f}
+  for(const n of nodes){if(n===drag)continue;n.x+=n.vx*=0.6;n.y+=n.vy*=0.6;n.x=Math.max(10,Math.min(W-10,n.x));n.y=Math.max(10,Math.min(H-10,n.y))}}
+function draw(){const W=canvas.width/devicePixelRatio,H=canvas.height/devicePixelRatio;ctx.clearRect(0,0,W,H);
+  const fg=getComputedStyle(document.body).color;
+  for(const l of links){ctx.strokeStyle=l.closed?'#c0392b':'#999';ctx.setLineDash(l.closed?[4,3]:[]);ctx.beginPath();ctx.moveTo(l.s.x,l.s.y);ctx.lineTo(l.t.x,l.t.y);ctx.stroke()}
+  ctx.setLineDash([]);
+  for(const n of nodes){const col={Person:'#8a5a2b',Event:'#2e86de',Observation:'#7f8c8d',View:'#27ae60',Value:'#f39c12'}[n.type]||'#aaa';
+    ctx.fillStyle=col;ctx.beginPath();ctx.arc(n.x,n.y,n.type==='Person'?9:5,0,7);ctx.fill();
+    if(n.type!=='Observation'||nodes.length<60){ctx.fillStyle=fg;ctx.font='11px sans-serif';ctx.fillText(n.label.slice(0,14),n.x+8,n.y+4)}}}
+function loop(){if(nodes.length){step();draw()}requestAnimationFrame(loop)} loop();
+canvas.addEventListener('mousedown',e=>{const r=canvas.getBoundingClientRect(),x=e.clientX-r.left,y=e.clientY-r.top;drag=nodes.find(n=>Math.hypot(n.x-x,n.y-y)<10)||null});
+canvas.addEventListener('mousemove',e=>{if(!drag)return;const r=canvas.getBoundingClientRect();drag.x=e.clientX-r.left;drag.y=e.clientY-r.top});
+window.addEventListener('mouseup',()=>drag=null); window.addEventListener('resize',resize);
+function render(){if(!G)return;const side=document.getElementById('side'),f=sel.value,showRej=document.getElementById('showRejected').checked;
+  const cons=new Set(G.contradictions.flatMap(c=>[c.claim_a,c.claim_b]));let html='';
+  for(const k in DIM){if(f&&f!==k)continue;const cl=G.claims.filter(c=>c.dimension===k&&(showRej||c.user_review!=='rejected'));if(!cl.length)continue;
+    html+=`<div class="dim">${k} ${DIM[k]} <span class="meta">(${cl.length})</span></div>`;
+    for(const c of cl){const ev=(c.evidence||[])[0]||{};html+=`<div class="claim ${cons.has(c.id)?'con':''}">${esc(c.claim)}
+      <span class="tag">${c.strength}</span><span class="tag">conf ${c.confidence}</span><span class="tag">${c.user_review}</span>${c.kind==='reflection'?'<span class="tag">反思</span>':''}${(c.tags||[]).includes('ungrounded')?'<span class="tag">未落地</span>':''}
+      <div class="meta">${c.valid_from||'?'}${c.valid_to?' – '+c.valid_to:''} · ${ev.evidence_type||''} · ${c.id}</div>
+      ${ev.quote?`<div class="quote">「${esc(ev.quote)}」</div>`:''}</div>`}}
+  if(G.contradictions.length){html+='<div class="dim">矛盾登记</div>';for(const c of G.contradictions)html+=`<div class="claim con">${esc(c.description)}<div class="meta">${c.claim_a} ↔ ${c.claim_b} · aware=${c.aware} · ${esc(c.how_handled||'')}</div></div>`}
+  if(G.cases.length){html+='<div class="dim">决策案例</div>';for(const k of G.cases)html+=`<div class="claim"><b>${k.when||'?'}</b> ${esc(k.situation)}<div class="meta">选项: ${(k.options||[]).join(' / ')} → ${esc(k.choice)}；理由: ${esc(k.stated_reason||'')}</div></div>`}
+  side.innerHTML=html||'<p class="meta">没有内容</p>'}
+function esc(s){return String(s??'').replace(/[&<>]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;'}[c]))}
+</script></body></html>
