@@ -23,7 +23,8 @@
 
 ## 代码约定
 - Python ≥ 3.10，**零第三方依赖**（标准库 + SQLite + urllib）。新依赖必须是可选的、带 fallback。
-- 一个 workspace = 一个人格；`workspace/persona.db` 是核心资产。
+- 一个 workspace = 一个人格；`<ws>/persona.db` 是核心资产。
+- **人格数据与代码隔离**：workspace 和原始材料都在仓库外的 `$RUSHI_HOME`（默认 `~/.rushi`；`-w 名字` → `~/.rushi/workspaces/名字`，原始聊天记录放 `~/.rushi/raw/`）。CLI 拒绝在仓库内建 workspace。任何具体人格的内容都不进 git；仓库里只允许 `examples/` 的虚构样例。
 - LLM 通过 `rushi/llm.py` 抽象：`anthropic` | `openai`（Ollama/vLLM 等本地）| `mock`（离线，只测管道）。所有 prompt 在 `prompts/*.md`，用首行的大写标记（如 `EXTRACT_CLAIMS`）路由；MockLLM 靠这个标记返回假数据。
 - 记忆三层：常驻人格卡+风格规则 → 每轮检索（`retrieve.py`，char-bigram BM25，可插 `Embedder`，RRF 融合）→ 模型回复 `[search: …]` 主动查。
 - 测试：`RUSHI_LLM=mock python -m unittest tests.test_pipeline -v`。改动后必须通过；新增功能要加进这个端到端测试。

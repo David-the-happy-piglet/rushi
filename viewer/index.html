@@ -18,7 +18,7 @@ main{display:grid;grid-template-columns:1fr 1fr;gap:0;height:calc(100vh - 58px)}
 input,select{font:inherit}
 </style></head><body>
 <header><strong>如是 · 图谱查看器</strong>
-<input type="file" id="file" accept=".json"> <span class="meta">选择 workspace/exports/graph.json（纯本地，不上传）</span>
+<input type="file" id="file" accept=".json"> <span class="meta">选择 ~/.rushi/workspaces/&lt;名字&gt;/exports/graph.json（纯本地，不上传）</span>
 <select id="filter"><option value="">全部维度</option></select>
 <label><input type="checkbox" id="showRejected"> 显示已驳回</label></header>
 <main><canvas id="canvas"></canvas><div id="side"><p class="meta">载入文件后，左侧是节点图（可拖动），右侧按维度列出观察、证据和矛盾。</p></div></main>

@@ -96,6 +96,22 @@ class PipelineTest(unittest.TestCase):
         self.assertTrue(ground("我妈刚做完手术 我怎么可能走", text))
         self.assertFalse(ground("他从小就热爱冒险", text))
 
+    def test_workspace_outside_repo(self):
+        import os
+        repo = Path(__file__).resolve().parent.parent
+        # bare name → $RUSHI_HOME/workspaces/<name>, never inside the repo
+        ws = cli.resolve_workspace("someone")
+        self.assertEqual(ws, (cli.RUSHI_HOME / "workspaces" / "someone").resolve())
+        self.assertNotIn(repo, ws.parents)
+        # a path inside the repo is refused
+        old = os.environ.pop("RUSHI_ALLOW_IN_REPO", None)
+        try:
+            with self.assertRaises(SystemExit):
+                cli.resolve_workspace(str(repo / "ws"))
+        finally:
+            if old is not None:
+                os.environ["RUSHI_ALLOW_IN_REPO"] = old
+
 
 if __name__ == "__main__":
     unittest.main()

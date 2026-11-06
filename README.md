@@ -16,27 +16,42 @@ export ANTHROPIC_API_KEY=sk-...        # 用 Claude
 # 或者本地模型：export RUSHI_LLM=openai RUSHI_OPENAI_BASE=http://localhost:11434/v1 RUSHI_MODEL=qwen3:8b
 ```
 
+## 数据与代码隔离
+
+所有人格数据（`persona.db`、`speakers.json`、沙盒、导出、原始聊天记录）都放在**仓库之外**的 `$RUSHI_HOME`（默认 `~/.rushi`）：
+
+```
+~/.rushi/
+  raw/                     原始聊天记录 / 叙事材料
+  workspaces/<名字>/       一个人格一个 workspace：persona.db, speakers.json, sandboxes/, exports/
+```
+
+- `-w 名字` → `$RUSHI_HOME/workspaces/名字`；`-w ./路径` 或绝对路径则按原样使用。
+- CLI **拒绝**在代码仓库内建 workspace（确需时设 `RUSHI_ALLOW_IN_REPO=1`）。
+- `.gitignore` 兜底屏蔽 `*.db`、`speakers.json`（`examples/` 除外）、`exports/` 等。
+- 仓库里只有 `examples/` 中虚构的样例人物「阿泽」，用于测试。
+
 ## 阶段 0–4：建立单一人格的完整路径
 
 ```bash
-rushi -w ./ws init                                 # 0. 建 workspace，生成 speakers.json 模板
-rushi -w ./ws inspect-chat chat.txt                # 看聊天记录里有哪些说话人
-#    编辑 ws/speakers.json：target = ta 的名字；others = 其他人及其与 ta 的关系；aliases = 脱敏别名
-rushi -w ./ws ingest-chat chat.txt                 # 1. 导入聊天（切会话、合并连发、脱敏、标记哪边是 ta）
-rushi -w ./ws ingest-text about.md --reporter user # 1. 导入第三人称描述 / 访谈 / 日记（见格式说明）
-rushi -w ./ws add-fact "他其实很怕狗" --dimension I --year 2018   # 随时补一条事实
-rushi -w ./ws style                                # 2. 风格卡：统计 + 规则（版本化）
-rushi -w ./ws extract                              # 3. 逐块抽取 → 带证据的观察、决策案例、图谱
-rushi -w ./ws coverage                             # 哪些维度证据薄
-rushi -w ./ws review list                          # 人工审核队列（敏感/未落地/矛盾 优先）
-rushi -w ./ws review confirmed clm_xxx             #    confirmed | rejected | edited --text "改写后的说法"
-rushi -w ./ws reflect                              # 3. 反思：跨观察综合 + 登记矛盾（从不删除）
-rushi -w ./ws persona                              # 3. 核心人格卡（常驻上下文，默认排除敏感维度）
-rushi -w ./ws chat --relation close_friend --period 2018-2020     # 4. 以 ta 的身份聊天
-rushi -w ./ws ask "外地 offer 薪资高40% 但妈妈身体不好。选项: 接受/拒绝/拖着"   # 4. 如果是 ta 会怎么做
-rushi -w ./ws export-graph                         # 导出 graph.json → 用 viewer/index.html 打开浏览
-rushi -w ./ws eval blind -n 20                     # 风格盲测表；填好后 rushi eval score
-rushi -w ./ws eval backtest                        # 决策回测（藏起已知决定看能否预测）
+rushi -w ta init                                 # 0. 建 workspace（~/.rushi/workspaces/ta），生成 speakers.json 模板
+rushi -w ta inspect-chat chat.txt                # 看聊天记录里有哪些说话人
+#    编辑 ~/.rushi/workspaces/ta/speakers.json：target = ta 的名字；others = 其他人及其与 ta 的关系；aliases = 脱敏别名
+rushi -w ta ingest-chat chat.txt                 # 1. 导入聊天（切会话、合并连发、脱敏、标记哪边是 ta）
+rushi -w ta ingest-text about.md --reporter user # 1. 导入第三人称描述 / 访谈 / 日记（见格式说明）
+rushi -w ta add-fact "他其实很怕狗" --dimension I --year 2018   # 随时补一条事实
+rushi -w ta style                                # 2. 风格卡：统计 + 规则（版本化）
+rushi -w ta extract                              # 3. 逐块抽取 → 带证据的观察、决策案例、图谱
+rushi -w ta coverage                             # 哪些维度证据薄
+rushi -w ta review list                          # 人工审核队列（敏感/未落地/矛盾 优先）
+rushi -w ta review confirmed clm_xxx             #    confirmed | rejected | edited --text "改写后的说法"
+rushi -w ta reflect                              # 3. 反思：跨观察综合 + 登记矛盾（从不删除）
+rushi -w ta persona                              # 3. 核心人格卡（常驻上下文，默认排除敏感维度）
+rushi -w ta chat --relation close_friend --period 2018-2020     # 4. 以 ta 的身份聊天
+rushi -w ta ask "外地 offer 薪资高40% 但妈妈身体不好。选项: 接受/拒绝/拖着"   # 4. 如果是 ta 会怎么做
+rushi -w ta export-graph                         # 导出 graph.json → 用 viewer/index.html 打开浏览
+rushi -w ta eval blind -n 20                     # 风格盲测表；填好后 rushi eval score
+rushi -w ta eval backtest                        # 决策回测（藏起已知决定看能否预测）
 ```
 
 试跑（离线）：`RUSHI_LLM=mock python -m unittest tests.test_pipeline -v`，或用 `examples/` 里的样例走一遍上面的命令。

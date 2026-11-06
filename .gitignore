@@ -1,10 +1,28 @@
+# --- 代码产物 ---
 __pycache__/
 *.pyc
 *.egg-info/
-workspace/
-ws/
-data/raw/
-*.db
-exports/
-.env
 .venv/
+.env
+
+# --- 人格数据：永不进仓库 ---
+# 真实数据统一放在仓库外的 $RUSHI_HOME（默认 ~/.rushi），CLI 会拒绝在仓库内建 workspace。
+# 以下规则是兜底，防止误拷贝进来。
+workspace/
+workspaces/
+ws/
+data/
+raw/
+exports/
+sandboxes/
+*.db
+*.db-journal
+*.db-wal
+*.db-shm
+*.sqlite
+*.sqlite3
+speakers.json
+!examples/speakers.json
+graph.json
+blind_test.json
+docs/chat-transcript.md

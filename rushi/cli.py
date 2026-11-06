@@ -1,5 +1,9 @@
 """rushi — 如是.  CLI for building and querying a single persona.
 
+Workspaces live OUTSIDE the code repo, under $RUSHI_HOME (default ~/.rushi):
+    -w NAME           → $RUSHI_HOME/workspaces/NAME
+    -w ./path | /abs  → that path (refused if it is inside the code repo)
+
 Workspace layout (one persona per workspace):
     <ws>/persona.db           base memory (never written by fiction)
     <ws>/speakers.json        which chat names are ta, and who the others are
@@ -10,6 +14,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import sys
 from pathlib import Path
 
@@ -24,8 +29,26 @@ from .schema import DIMENSIONS, Source, new_id, to_dict
 from .store import Store
 
 
+RUSHI_HOME = Path(os.environ.get("RUSHI_HOME", "~/.rushi")).expanduser()
+_REPO = Path(__file__).resolve().parent.parent
+
+
+def resolve_workspace(w: str) -> Path:
+    """Bare name → $RUSHI_HOME/workspaces/<name>; anything path-like is used as given.
+    Persona data must never live inside the code repo (it would risk being committed)."""
+    p = Path(w).expanduser()
+    if not p.is_absolute() and len(p.parts) == 1 and not w.startswith("."):
+        p = RUSHI_HOME / "workspaces" / w
+    p = p.resolve()
+    in_repo = (_REPO / "pyproject.toml").exists() and (p == _REPO or _REPO in p.parents)
+    if in_repo and not os.environ.get("RUSHI_ALLOW_IN_REPO"):
+        sys.exit(f"拒绝：workspace {p} 在代码仓库内。人格数据必须和项目隔离——"
+                 f"用 `-w 名字`（存到 {RUSHI_HOME / 'workspaces'}）或仓库外的路径。")
+    return p
+
+
 def _ws(args) -> Path:
-    ws = Path(args.workspace).expanduser()
+    ws = resolve_workspace(args.workspace)
     ws.mkdir(parents=True, exist_ok=True)
     (ws / "exports").mkdir(exist_ok=True)
     return ws
@@ -217,7 +240,8 @@ def cmd_sandbox(args):
 
 def main(argv=None):
     p = argparse.ArgumentParser(prog="rushi", description="如是 — persona memory & simulation")
-    p.add_argument("-w", "--workspace", default="./workspace", help="persona workspace dir")
+    p.add_argument("-w", "--workspace", default="default",
+                   help="workspace name (→ $RUSHI_HOME/workspaces/NAME, default ~/.rushi) or a path outside the repo")
     p.add_argument("--llm", default=None, help="anthropic | openai | mock (default from env RUSHI_LLM)")
     sp = p.add_subparsers(dest="cmd", required=True)
 
