@@ -1,5 +1,7 @@
 # 如是 (rushi)
 
+English | [简体中文](README.zh-CN.md)
+
 > "If it were them, they would surely have done the same."
 > 如是我闻 ("Thus have I heard"): write down what you heard, as it was.
 
