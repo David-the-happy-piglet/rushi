@@ -56,6 +56,53 @@ DIMENSIONS: dict[str, str] = {
 SENSITIVE_DIMENSIONS = {"J"}
 
 EVIDENCE_TYPES = ("behavior", "self_report", "other_report")
+
+# --------------------------------------------------------------------------- #
+# Layered graph (borrowed from Graphiti's episodic / entity / community split,
+# with two persona-specific layers in between).
+#   L0 Episode      raw material (chunk)                      ep:<chunk>
+#   L1 Entity       Person / Event / Decision / Place / Thing  ent_…
+#   L2 Observation  grounded claim from one chunk              obs:<claim>
+#   L3 Trait        reflection across observations/dimensions  trt:<claim>
+#   L4 Theme        cluster of traits (label propagation)      thm_…
+# Edges go *up* the derivation chain (evidence → conclusion) or sideways within a layer.
+# --------------------------------------------------------------------------- #
+LAYERS = {"Episode": 0, "Person": 1, "Event": 1, "Decision": 1, "Place": 1, "Thing": 1,
+          "Observation": 2, "Trait": 3, "Theme": 4}
+ENTITY_TYPES = ("Person", "Event", "Decision", "Place", "Thing")
+
+# L1 fact relations (entity ↔ entity). Anything else is stored as RELATED_TO with the raw predicate.
+FACT_RELS = {
+    "FAMILY_OF": "亲属", "PARTNER_OF": "伴侣", "FRIEND_OF": "朋友", "COLLEAGUE_OF": "同事",
+    "CARES_FOR": "照顾/在意", "CONFLICT_WITH": "冲突", "EXPERIENCED": "经历", "PARTICIPATED_IN": "参与",
+    "DECIDED": "做出决定", "CAUSED": "导致", "BECAUSE_OF": "因为", "LIVES_IN": "住在", "MOVED_TO": "搬到",
+    "WORKS_AT": "工作于", "OWNS": "拥有", "RELATED_TO": "相关",
+}
+# which (from_type, to_type) pairs may carry which fact relations (Graphiti's edge_type_map idea)
+FACT_TYPE_MAP: dict[tuple[str, str], set[str]] = {
+    ("Person", "Person"): {"FAMILY_OF", "PARTNER_OF", "FRIEND_OF", "COLLEAGUE_OF", "CARES_FOR", "CONFLICT_WITH", "RELATED_TO"},
+    ("Person", "Event"): {"EXPERIENCED", "PARTICIPATED_IN", "CAUSED", "RELATED_TO"},
+    ("Person", "Decision"): {"DECIDED", "RELATED_TO"},
+    ("Person", "Place"): {"LIVES_IN", "MOVED_TO", "WORKS_AT", "RELATED_TO"},
+    ("Person", "Thing"): {"OWNS", "WORKS_AT", "RELATED_TO"},
+    ("Decision", "Event"): {"BECAUSE_OF", "CAUSED", "RELATED_TO"},
+    ("Decision", "Person"): {"BECAUSE_OF", "RELATED_TO"},
+    ("Event", "Event"): {"CAUSED", "BECAUSE_OF", "RELATED_TO"},
+    ("Event", "Person"): {"CAUSED", "RELATED_TO"},
+    ("Event", "Place"): {"RELATED_TO"},
+    ("Decision", "Place"): {"RELATED_TO"},
+}
+# L3 ↔ L3 cross-dimension relations between traits
+TRAIT_RELS = {
+    "CAUSES": "导致", "MANIFESTS_AS": "表现为", "REINFORCES": "互相强化",
+    "TRADES_OFF": "此消彼长/权衡", "CONTRADICTS": "矛盾", "CHANGED_TO": "后来变成",
+}
+# structural (between-layer) relations
+STRUCT_RELS = {
+    "MENTIONS": "原文提到", "SUPPORTS": "原文支撑", "ABOUT": "关于", "DERIVED_FROM": "推导自",
+    "SHOWN_IN": "体现在", "MEMBER_OF": "属于主题", "CONTRADICTS": "矛盾", "CHANGED_TO": "后来变成",
+}
+INFERENCE_TYPES = ("generalization", "causal", "contrast")
 REVIEW_STATES = ("pending", "confirmed", "rejected", "edited")
 
 
@@ -124,6 +171,9 @@ class Claim:
     tags: list[str] = field(default_factory=list)
     superseded_by: Optional[str] = None
     contradicts: list[str] = field(default_factory=list)
+    # how this claim came to be: for observations {"about": [entity ids], "llm_confidence": x};
+    # for traits {"based_on": [...], "reasoning": "...", "inference": "...", "score": {...}}
+    derivation: dict[str, Any] = field(default_factory=dict)
 
     @property
     def active(self) -> bool:
@@ -152,6 +202,7 @@ class Edge:
     source_ids: list[str] = field(default_factory=list)
     claim_id: Optional[str] = None
     invalidated_by: Optional[str] = None
+    expired_at: Optional[str] = None   # system time when this edge stopped being current (Graphiti's t'_expired)
     attrs: dict[str, Any] = field(default_factory=dict)
 
 
@@ -168,6 +219,8 @@ class DecisionCase:
     source_ids: list[str] = field(default_factory=list)
     relation_context: str = ""
     confidence: float = 0.5
+    entity_id: Optional[str] = None    # the L1 Decision node this case is attached to
+    quotes: list[str] = field(default_factory=list)
 
 
 @dataclass
@@ -179,6 +232,7 @@ class Contradiction:
     aware: Optional[bool] = None   # does the person seem aware of it?
     how_handled: str = ""
     recorded_at: str = field(default_factory=now_iso)
+    kind: str = "contradiction"    # contradiction (same period, both stay valid) | change (over time)
 
 
 def to_dict(obj: Any) -> dict:
@@ -191,6 +245,14 @@ def dumps(obj: Any) -> str:
 
 def evidence_from_dict(d: dict) -> Evidence:
     return Evidence(**{k: d.get(k) for k in Evidence.__dataclass_fields__ if k in d})
+
+
+def layer_of(node_type: str) -> int:
+    return LAYERS.get(node_type, 1)
+
+
+def _known(cls, d: dict) -> dict:
+    return {k: v for k, v in d.items() if k in cls.__dataclass_fields__}
 
 
 def claim_from_dict(d: dict) -> Claim:

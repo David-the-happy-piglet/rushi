@@ -93,3 +93,13 @@
 3. 名字：**如是**（备选：若是、余晖/Afterglow、犹在）。
 
 实现见 `README.md` 与 `CLAUDE.md`。
+
+## 12. 分层网状图谱（2026-11，参考 Graphiti）
+
+问题：早期图谱是以 ta 为中心的星形，只有「ta → 观察/事件/人物」；reflect 按维度各自进行，无法产生跨维度联系；特质没有记录推导过程；矛盾只是一个 tag。
+
+改为五层：L0 原文（Episode）→ L1 实体与实体之间的事实边 → L2 观察 → L3 特质 → L4 主题。
+- 借鉴 Graphiti：episodic/entity/community 三层子图与双向追溯（MENTIONS/SUPPORTS）；事实即实体间的边；实体消解（候选 + LLM 判定，保留别名）；同一对实体间的事实去重；按类型对约束允许的关系（edge_type_map）；`expired_at` 补齐双时间轴；标签传播做社区；检索加 BFS 图邻域并与 BM25 做 RRF 融合。
+- 不照搬：Graphiti 用新事实让旧边失效（覆盖矛盾），与「允许矛盾」冲突。这里区分 `contradiction`（同期，两边都有效，连 CONTRADICTS 边）与 `change`（跨期，旧的设 valid_to，连 CHANGED_TO 边）。不引入 Neo4j/向量依赖。
+- 置信度改为代码计算（scoring.py），因为模型自报的置信度普遍偏高（0.8–0.98）。
+- 特质含敏感（J）依据时整条特质标 sensitive，不进聊天和决策。

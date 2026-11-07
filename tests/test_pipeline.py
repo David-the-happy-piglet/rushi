@@ -76,6 +76,88 @@ class PipelineTest(unittest.TestCase):
         g = json.loads((self.ws / "exports" / "graph.json").read_text(encoding="utf-8"))
         self.assertTrue(g["nodes"] and g["edges"])
 
+    def test_layered_graph(self):
+        from rushi.extract import add_user_fact
+        from rushi.retrieve import Retriever
+        from rushi.schema import FACT_RELS, TRAIT_RELS
+        self.run_cli("init")
+        self.run_cli("ingest-chat", str(EX / "sample_chat.txt"))
+        self.run_cli("ingest-text", str(EX / "sample_narrative.md"))
+        store = Store(self.ws / "persona.db")
+        extract_all(store, self.llm)
+        # L0 episodes, one per chunk; every observation is supported by an episode quote
+        self.assertEqual(len(store.nodes("Episode")), len(store.chunks()))
+        for o in store.nodes("Observation"):
+            sup = store.edges(to_id=o.id, rel="SUPPORTS")
+            self.assertTrue(sup and sup[0].from_id.startswith("ep:") and sup[0].attrs["quote"])
+            self.assertTrue(store.edges(from_id=o.id, rel="ABOUT"))
+        # entity resolution: 妈妈 / 我妈 / 母亲 collapse into one Person with aliases
+        moms = [n for n in store.nodes("Person") if n.label == "母亲"]
+        self.assertEqual(len(moms), 1)
+        self.assertTrue({"妈妈", "我妈"} & set(moms[0].attrs["aliases"]))
+        self.assertGreater(len(moms[0].attrs["episodes"]), 1)
+        # L1 facts are entity–entity edges with a whitelisted relation
+        facts = [e for e in store.edges() if e.id.startswith("fct_")]
+        self.assertTrue(facts and all(e.rel in FACT_RELS for e in facts))
+        # decision cases are deduplicated per Decision node
+        self.assertEqual(len(store.cases()), len({k.entity_id for k in store.cases()}))
+        # a single chunk never yields "strong"; confidence is code-computed and modest
+        obs = store.claims()
+        self.assertTrue(all(c.strength != "strong" and c.confidence <= 0.9 for c in obs))
+
+        # sensitive J material stays sensitive all the way up
+        add_user_fact(store, "他小时候被寄养在外婆家两年", "J", "1998")
+        add_user_fact(store, "他童年很少见到父母", "J", "1999")
+
+        r = persona.reflect(store, self.llm)
+        self.assertGreater(r["traits"], 0)
+        traits = [c for c in store.claims() if c.kind == "reflection"]
+        for t in traits:                                                       # derivation is explicit
+            self.assertGreaterEqual(len(t.derivation["based_on"]), 2)
+            self.assertTrue(t.derivation["reasoning"] and t.derivation["score"]["n_supports"] >= 2)
+            self.assertEqual(len(store.edges(from_id=f"trt:{t.id}", rel="DERIVED_FROM")), len(t.derivation["based_on"]))
+        self.assertTrue(any(b.startswith("clm_") and store.get_claim(b).kind == "reflection"
+                            for t in traits for b in t.derivation["based_on"]))  # trait built on traits
+        links = [e for e in store.edges(active_only=True) if e.rel in TRAIT_RELS and e.rel != "CONTRADICTS"]
+        self.assertTrue(links and links[0].attrs["explanation"] and links[0].attrs["based_on"])
+        self.assertTrue(store.contradictions())
+        self.assertTrue(store.edges(rel="CONTRADICTS"))                       # contradictions are edges too
+        con = store.contradictions()[0]
+        self.assertTrue(store.get_claim(con.claim_a).active and store.get_claim(con.claim_b).active)
+        jt = [t for t in traits if t.dimension == "J"]
+        self.assertTrue(jt and all("sensitive" in t.tags for t in jt))
+        self.assertFalse(any("寄养" in l or "J 维度" in l for l in persona.knowledge_lines(store)))
+        themes = store.artifact("themes")["themes"]
+        self.assertTrue(themes and store.edges(to_id=themes[0]["id"], rel="MEMBER_OF"))
+
+        # re-running reflect supersedes (never deletes) the previous traits
+        n_active = len(traits)
+        persona.reflect(store, self.llm)
+        allc = store.claims(active_only=False)
+        self.assertEqual(len([c for c in store.claims() if c.kind == "reflection"]), n_active)
+        self.assertEqual(len([c for c in allc if c.kind == "reflection" and c.superseded_by]), n_active)
+        self.assertTrue(all(e.expired_at for t in traits for e in store.edges(from_id=f"trt:{t.id}", rel="DERIVED_FROM")))
+
+        # graph retrieval returns derivation chains, never sensitive ones
+        ctx = Retriever(store).graph_context("妈妈 offer 外地")
+        self.assertTrue(ctx)
+        self.assertTrue(any("推导" in c for c in ctx))
+        self.assertFalse(any("寄养" in c for c in ctx))
+
+    def test_scoring(self):
+        from rushi import scoring
+        from rushi.schema import Claim, Evidence
+        mk = lambda i, et, y: Claim(id=f"c{i}", dimension="F", claim="x", confidence=0.6, valid_from=y,
+                                    evidence=[Evidence(source_id="s", ref_id=f"chk{i}", quote="q", evidence_type=et)])
+        s1, c1, _ = scoring.score_trait([mk(1, "behavior", "2019"), mk(1, "behavior", "2019")])
+        self.assertEqual(s1, "weak"); self.assertLessEqual(c1, 0.55)          # one episode → capped
+        s3, c3, b = scoring.score_trait([mk(1, "behavior", "2019"), mk(2, "other_report", "2020"), mk(3, "self_report", "2021")])
+        self.assertEqual(s3, "strong"); self.assertGreater(c3, c1)
+        _, c3x, _ = scoring.score_trait([mk(1, "behavior", "2019"), mk(2, "other_report", "2020"), mk(3, "self_report", "2021")],
+                                        contradicted=True)
+        self.assertLess(c3x, c3)
+        self.assertLess(scoring.score_observation("moderate", "other_report", False, 0.95), 0.3)
+
     def test_sandbox_isolation(self):
         self.run_cli("init")
         self.run_cli("ingest-chat", str(EX / "sample_chat.txt"))
@@ -95,6 +177,14 @@ class PipelineTest(unittest.TestCase):
         text = "他说：我妈刚做完手术，我怎么可能走。"
         self.assertTrue(ground("我妈刚做完手术 我怎么可能走", text))
         self.assertFalse(ground("他从小就热爱冒险", text))
+
+    def test_env_file_and_think_tags(self):
+        from rushi import config
+        from rushi.llm import parse_json
+        f = self.ws / ".env"
+        f.write_text('# c\nexport RUSHI_X_A="q v"\nRUSHI_X_B=1 # note\nRUSHI_X_EMPTY=\n', encoding="utf-8")
+        self.assertEqual(config._parse(f), {"RUSHI_X_A": "q v", "RUSHI_X_B": "1", "RUSHI_X_EMPTY": ""})
+        self.assertEqual(parse_json('<think>想想 {"x": 0}</think>\n{"claims": []}'), {"claims": []})
 
     def test_workspace_outside_repo(self):
         import os

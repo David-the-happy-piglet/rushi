@@ -25,7 +25,7 @@ from .extract import add_user_fact, extract_all
 from .ingest import chat as chat_ingest
 from .ingest.narrative import chat_sessions_to_chunks, to_chunks
 from .llm import get_llm
-from .schema import DIMENSIONS, Source, new_id, to_dict
+from .schema import DIMENSIONS, Source, layer_of, new_id, to_dict
 from .store import Store
 
 
@@ -194,7 +194,10 @@ def cmd_ask(args):
 
 def cmd_export_graph(args):
     store, ws = _store(args), _ws(args)
-    data = {"nodes": [to_dict(n) for n in store.nodes()], "edges": [to_dict(e) for e in store.edges()],
+    data = {"nodes": [{**to_dict(n), "layer": layer_of(n.type)} for n in store.nodes()],
+            "edges": [to_dict(e) for e in store.edges()],
+            "themes": (store.artifact("themes") or {}).get("themes", []),
+            "dimensions": DIMENSIONS,
             "claims": [to_dict(c) for c in store.claims(active_only=False)],
             "cases": [to_dict(c) for c in store.cases()], "contradictions": [to_dict(c) for c in store.contradictions()]}
     out = ws / "exports" / "graph.json"

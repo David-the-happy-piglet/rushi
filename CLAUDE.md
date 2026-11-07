@@ -26,7 +26,8 @@
 - 一个 workspace = 一个人格；`<ws>/persona.db` 是核心资产。
 - **人格数据与代码隔离**：workspace 和原始材料都在仓库外的 `$RUSHI_HOME`（默认 `~/.rushi`；`-w 名字` → `~/.rushi/workspaces/名字`，原始聊天记录放 `~/.rushi/raw/`）。CLI 拒绝在仓库内建 workspace。任何具体人格的内容都不进 git；仓库里只允许 `examples/` 的虚构样例。
 - LLM 通过 `rushi/llm.py` 抽象：`anthropic` | `openai`（Ollama/vLLM 等本地）| `mock`（离线，只测管道）。所有 prompt 在 `prompts/*.md`，用首行的大写标记（如 `EXTRACT_CLAIMS`）路由；MockLLM 靠这个标记返回假数据。
-- 记忆三层：常驻人格卡+风格规则 → 每轮检索（`retrieve.py`，char-bigram BM25，可插 `Embedder`，RRF 融合）→ 模型回复 `[search: …]` 主动查。
+- **分层图谱**（`schema.LAYERS`）：L0 原文 Episode → L1 实体与事实边（Person/Event/Decision/Place/Thing，关系受 `FACT_TYPE_MAP` 约束）→ L2 观察（claim）→ L3 特质（reflection，`derivation` 记录 based_on/reasoning/inference）→ L4 主题（`themes.py` 标签传播）。特质之间有跨维度边（`TRAIT_RELS`）。实体消解在 `resolve.py`；置信度由 `scoring.py` 计算，不用模型自报的数字。重跑 reflect 会把旧特质标为 superseded、边设 `expired_at`，不删除。
+- 记忆三层：常驻人格卡+风格规则 → 每轮检索（`retrieve.py`，char-bigram BM25，可插 `Embedder`，RRF 融合；`graph_context()` 从实体/命中观察出发 BFS，返回特质←观察←原文的推导链）→ 模型回复 `[search: …]` 主动查。
 - 测试：`RUSHI_LLM=mock python -m unittest tests.test_pipeline -v`。改动后必须通过；新增功能要加进这个端到端测试。
 - 人格维度在 `schema.DIMENSIONS`（A–Q）；加维度要同步 `viewer/index.html` 的 `DIM` 和 `prompts/extract.md`。
 
@@ -50,6 +51,8 @@ rushi -w ws sandbox create --name x | sandbox scene --name x --scene … --other
 - 联合分析式的价值权重主动校准（`decide._value_weights` 现在只是强度×置信度）
 - 多人格沙盒的导演层 / 叙事层（现为最小两人场景循环）
 - 用真实数据跑 `extract → review list` 评估抽取质量，并据此迭代 `prompts/extract.md`
+- 实体抽取会把行为写成 Event（如「消失两天」）；J 维度的判定偏保守（童年自述常被归到 O/M）
+- viewer 在节点很多时连线仍会穿过节点
 
 ## 伦理边界（产品层面）
 纪念而非替代；界面要持续标明「这是模拟」；被模拟者的材料只在本地处理、脱敏后才发给云端模型；面向公众发布需遵守中国《人工智能拟人化互动服务管理暂行办法》与加州 SB 243（见 DESIGN_LOG）。

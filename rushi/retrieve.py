@@ -6,6 +6,8 @@ Three indexes, each with metadata filters (relation, year range, dimension):
 - exchanges: (other's message → ta's reply burst)   → style examples
 - chunks:    narrative material                       → memories
 - claims/cases: structured knowledge                  → persona reasoning
+plus `graph_context()`: BFS over the layered graph from entities/claims the query touches
+(Graphiti-style graph search), fused with BM25 by RRF and reranked by node distance.
 """
 from __future__ import annotations
 
@@ -15,7 +17,7 @@ from collections import Counter, defaultdict
 from dataclasses import dataclass, field
 from typing import Callable, Iterable, Optional
 
-from .schema import Claim, DecisionCase, Utterance
+from .schema import SENSITIVE_DIMENSIONS, TRAIT_RELS, Claim, DecisionCase, Utterance
 from .store import Store
 
 _WS = re.compile(r"\s+")
@@ -138,7 +140,8 @@ class Retriever:
         for c in self.store.claims():
             quotes = "；".join(e.quote for e in c.evidence[:2])
             docs.append(Doc(id=c.id, text=f"{c.claim} {quotes}", meta={"dimension": c.dimension, "year": _year(c.valid_from),
-                                                                    "kind": "claim", "confidence": c.confidence},
+                                                                    "kind": "claim", "confidence": c.confidence,
+                                                                    "sensitive": "sensitive" in c.tags},
                             payload=f"[{c.dimension}·{c.strength}·conf {c.confidence}·{c.valid_from or '?'}] {c.claim}（证据: {quotes[:80]}）"))
         for k in self.store.cases():
             docs.append(Doc(id=k.id, text=f"{k.situation} {k.stated_reason} {' '.join(k.options)}",
@@ -180,8 +183,90 @@ class Retriever:
                 return False
             if exclude and dim in exclude:
                 return False
+            if exclude and d.meta.get("sensitive") and exclude & SENSITIVE_DIMENSIONS:
+                return False
             return _where(year_range=year_range)(d)
         return self._hybrid("knowledge", self.idx_knowledge, query, k, where)
+
+
+    # ------------------------------------------------------------------ graph
+    def _adjacency(self) -> dict[str, list[tuple[str, str]]]:
+        if not hasattr(self, "_adj"):
+            adj: dict[str, list[tuple[str, str]]] = defaultdict(list)
+            for e in self.store.edges(active_only=True):
+                adj[e.from_id].append((e.to_id, e.rel))
+                adj[e.to_id].append((e.from_id, e.rel))
+            self._adj = adj
+        return self._adj
+
+    def graph_context(self, query: str, k: int = 6, hops: int = 3, include_sensitive: bool = False,
+                      year_range: Optional[tuple[int, int]] = None) -> list[str]:
+        """Derivation chains relevant to the query: trait ← observations ← quotes, found by BFS from
+        (a) entities named in the query and (b) BM25 hits, fused with RRF, reranked by graph distance."""
+        from .resolve import TARGET_ID, norm_name
+        adj = self._adjacency()
+        nq = norm_name(query)
+        seeds: dict[str, int] = {}
+        for n in [n for t in ("Person", "Event", "Decision", "Place", "Thing") for n in self.store.nodes(t)]:
+            if n.id == TARGET_ID:
+                continue
+            names = [n.label, *n.attrs.get("aliases", [])]
+            if any(len(norm_name(x)) >= 2 and norm_name(x) in nq for x in names):
+                seeds[n.id] = 0
+        exclude = None if include_sensitive else set(SENSITIVE_DIMENSIONS)
+        lex = self.knowledge(query, exclude=exclude, year_range=year_range, k=k * 2)
+        for d in lex:
+            if d.meta.get("kind") == "claim":
+                c = self.store.get_claim(d.id)
+                if c:
+                    seeds[(f"trt:{c.id}" if c.kind == "reflection" else f"obs:{c.id}")] = 0
+        dist: dict[str, int] = dict(seeds)
+        frontier = list(seeds)
+        for h in range(1, hops + 1):
+            nxt = []
+            for u in frontier:
+                for v, _ in adj.get(u, []):
+                    if v not in dist and v != TARGET_ID:      # the target touches everything: never traverse it
+                        dist[v] = h
+                        nxt.append(v)
+            frontier = nxt
+        rank: dict[str, float] = defaultdict(float)
+        for r_, d in enumerate(lex):
+            rank[d.id] += 1 / (60 + r_)
+        for nid, dd in dist.items():
+            if nid.startswith(("trt:", "obs:")):
+                rank[nid.split(":", 1)[1]] += 1 / (60 + 5 * dd) + (0.01 if nid.startswith("trt:") else 0)
+        out = []
+        for cid, _ in sorted(rank.items(), key=lambda x: -x[1]):
+            c = self.store.get_claim(cid)
+            if not c or not c.active or (not include_sensitive and ("sensitive" in c.tags or c.dimension in SENSITIVE_DIMENSIONS)):
+                continue
+            if year_range and _year(c.valid_from) and not (year_range[0] <= _year(c.valid_from) <= year_range[1]):
+                continue
+            out.append(render_chain(self.store, c, include_sensitive))
+            if len(out) >= k:
+                break
+        return out
+
+
+def render_chain(store: Store, c: Claim, include_sensitive: bool = False) -> str:
+    """One-paragraph derivation chain for prompts: trait → reasoning → supporting observations (quotes)."""
+    if c.kind != "reflection":
+        q = c.evidence[0].quote[:60] if c.evidence else ""
+        return f"[观察·{c.dimension}·conf {c.confidence}] {c.claim}（「{q}」）"
+    lines = [f"[特质·{c.dimension}·{c.strength}·conf {c.confidence}] {c.claim}",
+             f"  推导（{c.derivation.get('inference', '')}）：{c.derivation.get('reasoning', '')}"]
+    for sid in c.derivation.get("based_on", [])[:4]:
+        s = store.get_claim(sid)
+        if s and (include_sensitive or ("sensitive" not in s.tags and s.dimension not in SENSITIVE_DIMENSIONS)):
+            q = s.evidence[0].quote[:50] if s.evidence else ""
+            lines.append(f"  ← {s.claim}（「{q}」）")
+    for e in store.edges(from_id=f"trt:{c.id}", active_only=True):
+        if e.rel in TRAIT_RELS and e.rel not in ("CONTRADICTS", "CHANGED_TO"):
+            o = store.get_claim(e.to_id.split(":", 1)[-1])
+            if o and o.active and (include_sensitive or "sensitive" not in o.tags):
+                lines.append(f"  —{TRAIT_RELS[e.rel]}→ {o.claim}")
+    return "\n".join(lines)
 
 
 def _year(s: Optional[str]) -> Optional[int]:

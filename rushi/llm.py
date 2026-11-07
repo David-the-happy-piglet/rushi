@@ -1,10 +1,11 @@
 """LLM providers.
 
 - AnthropicLLM: calls the Messages API with urllib (no SDK dependency). Needs ANTHROPIC_API_KEY.
-- OpenAICompatLLM: any OpenAI-compatible endpoint (Ollama, vLLM, LM Studio) for local models.
+- OpenAICompatLLM: any OpenAI-compatible endpoint — local (Ollama, vLLM, LM Studio) or cloud (MiniMax, DeepSeek…).
 - MockLLM: deterministic, offline. Lets the whole pipeline run end-to-end in tests and demos.
 
 Select with env RUSHI_LLM = anthropic | openai | mock (default: mock if no key is set).
+Settings can also come from a .env file (see .env.example and rushi/config.py).
 """
 from __future__ import annotations
 
@@ -28,7 +29,7 @@ class LLM:
 
 
 def parse_json(text: str):
-    text = text.strip()
+    text = re.sub(r"<think>.*?</think>", "", text, flags=re.S).strip()   # reasoning models (MiniMax, qwen3…)
     text = re.sub(r"^```(?:json)?\s*|\s*```$", "", text, flags=re.S)
     try:
         return json.loads(text)
@@ -72,18 +73,25 @@ class OpenAICompatLLM(LLM):
     def __init__(self, base_url: Optional[str] = None, model: Optional[str] = None, api_key: Optional[str] = None):
         self.base_url = (base_url or os.environ.get("RUSHI_OPENAI_BASE", "http://localhost:11434/v1")).rstrip("/")
         self.model = model or os.environ.get("RUSHI_MODEL", "qwen3:8b")
-        self.api_key = api_key or os.environ.get("OPENAI_API_KEY", "local")
+        self.api_key = api_key or os.environ.get("RUSHI_API_KEY") or os.environ.get("OPENAI_API_KEY", "local")
 
     def complete(self, system, user, max_tokens=2000, temperature=0.3) -> str:
+        if "minimax" in self.base_url and temperature <= 0:
+            temperature = 0.01            # MiniMax rejects temperature 0
         body = json.dumps({"model": self.model, "max_tokens": max_tokens, "temperature": temperature,
                            "messages": [{"role": "system", "content": system},
                                         {"role": "user", "content": user}]}).encode("utf-8")
         req = urllib.request.Request(f"{self.base_url}/chat/completions", data=body, method="POST",
                                      headers={"content-type": "application/json",
                                               "authorization": f"Bearer {self.api_key}"})
-        with urllib.request.urlopen(req, timeout=300) as resp:
-            data = json.loads(resp.read().decode("utf-8"))
-        return data["choices"][0]["message"]["content"]
+        try:
+            with urllib.request.urlopen(req, timeout=300) as resp:
+                data = json.loads(resp.read().decode("utf-8"))
+        except urllib.error.HTTPError as e:
+            raise RuntimeError(f"{self.base_url} API error {e.code}: {e.read().decode('utf-8', 'ignore')[:500]}")
+        if "choices" not in data:
+            raise RuntimeError(f"{self.base_url} unexpected response: {json.dumps(data, ensure_ascii=False)[:500]}")
+        return data["choices"][0]["message"]["content"] or ""
 
 
 class MockLLM(LLM):
@@ -118,8 +126,14 @@ class MockLLM(LLM):
             return self._narrative(user)
         if "PERSONA_CARD" in system:
             return self._persona(user)
+        if "RESOLVE_ENTITIES" in system:
+            return self._resolve(user)
+        if "THEMES" in system:
+            groups = sorted({int(g) for g in re.findall(r"## 组 (\d+)", user)})
+            return json.dumps({"themes": [{"group": g, "name": f"主题{g}", "summary": "（mock）"} for g in groups]},
+                              ensure_ascii=False)
         if "REFLECT" in system:
-            return json.dumps({"insights": [], "contradictions": []}, ensure_ascii=False)
+            return self._reflect(user)
         if "STYLE_RULES" in system:
             return "- 模仿示例的长度和拆条\n- 不用句号结尾\n- 保持口头禅"
         # chat / sandbox: echo a terse reply built from retrieved examples when available
@@ -139,12 +153,67 @@ class MockLLM(LLM):
                                    "evidence_type": "self_report" if s.startswith("[ta]") or "我" in body else "other_report",
                                    "strength": "weak", "confidence": 0.5})
                     break
+        entities, facts, keys = [], [], {}
+        for name, typ, words in self.ENTITY_HINTS:
+            hit = next((w for w in words if w in text), None)
+            if hit:
+                k = f"e{len(entities) + 1}"
+                keys[name] = k
+                entities.append({"key": k, "name": name, "type": typ, "aliases": [hit] if hit != name else [], "when": None})
+                line = next((ln for ln in text.splitlines() if hit in ln), hit)
+                rel = {"Person": "RELATED_TO", "Place": "LIVES_IN", "Decision": "DECIDED"}.get(typ, "EXPERIENCED")
+                facts.append({"from": "ta", "rel": rel, "to": k, "fact": f"ta 与{name}有关",
+                              "quote": line.split("]", 1)[-1].strip()[:80], "when": None})
+        for c in claims:
+            c["about"] = ["ta"] + [keys[n] for n, _, ws in self.ENTITY_HINTS if n in keys and any(w in c["quote"] for w in ws)]
+            c["facts"] = [i for i, f in enumerate(facts) if f["to"] in c["about"]]
         cases = []
         for s in sentences:
-            if ("选择" in s or "决定" in s or "拒绝" in s or "接受" in s) and len(s) > 10:
-                cases.append({"situation": s[:60], "options": ["做", "不做"], "choice": "不确定",
+            if ("选择" in s or "决定" in s or "拒绝" in s or "接受" in s or "不去" in s) and len(s) > 4:
+                dec = keys.get("拒绝外地offer")
+                cases.append({"decision": dec, "situation": s[:60], "options": ["做", "不做"], "choice": "不确定",
                               "stated_reason": "", "quote": s[:80], "when": None})
-        return json.dumps({"claims": claims[:8], "events": [], "relations": [], "cases": cases[:2]}, ensure_ascii=False)
+        return json.dumps({"entities": entities, "facts": facts, "claims": claims[:8], "cases": cases[:2]},
+                          ensure_ascii=False)
+
+    ENTITY_HINTS = [
+        ("母亲", "Person", ["母亲", "妈妈", "我妈", "妈"]),
+        ("伴侣", "Person", ["伴侣", "老张"]),
+        ("朋友A", "Person", ["朋友A"]),
+        ("上海", "Place", ["上海"]),
+        ("拒绝外地offer", "Decision", ["offer"]),
+    ]
+
+    def _resolve(self, user: str) -> str:
+        new = re.findall(r"^- (\S+) \[(\w+)\] (\S+)", user.split("## Existing")[0], flags=re.M)
+        old = re.findall(r"^- (ent_\w+) \[(\w+)\] (\S+)", user.split("## Existing")[-1], flags=re.M)
+        out = []
+        for key, typ, name in new:
+            m = next((i for i, t, n in old if n == name and t == typ), None)
+            out.append({"key": key, "match": m, "name": name})
+        return json.dumps({"matches": out}, ensure_ascii=False)
+
+    def _reflect(self, user: str) -> str:
+        obs = re.findall(r"^- (clm_\w+) \[([A-Q])/", user.split("## 已确认的特质")[0], flags=re.M)
+        cases = re.findall(r"^- (case_\w+) ", user, flags=re.M)
+        by_dim: dict[str, list[str]] = {}
+        for cid, dim in obs:
+            by_dim.setdefault(dim, []).append(cid)
+        traits = []
+        for dim, ids in by_dim.items():
+            if len(ids) >= 2:
+                traits.append({"key": f"t{len(traits) + 1}", "dimension": dim, "claim": f"（mock）{dim} 维度的稳定倾向",
+                               "based_on": ids[:3], "reasoning": "（mock）这几条观察指向同一倾向",
+                               "inference": "generalization", "shown_in": cases[:1]})
+        if len(traits) >= 2:      # one cross-dimension trait built on two other traits
+            traits.append({"key": "tx", "dimension": traits[0]["dimension"], "claim": "（mock）跨维度综合",
+                           "based_on": [traits[0]["key"], traits[1]["key"]], "reasoning": "（mock）两个特质共同指向",
+                           "inference": "causal", "shown_in": []})
+        links = ([{"from": traits[0]["key"], "to": traits[1]["key"], "rel": "CAUSES", "explanation": "（mock）",
+                   "based_on": traits[0]["based_on"][:1]}] if len(traits) >= 2 else [])
+        cons = ([{"a": traits[0]["based_on"][0], "b": traits[1]["based_on"][0], "kind": "contradiction",
+                  "description": "（mock）矛盾", "aware": None, "how_handled": ""}] if len(traits) >= 2 else [])
+        return json.dumps({"traits": traits, "links": links, "contradictions": cons}, ensure_ascii=False)
 
     def _parse_situation(self, user: str) -> str:
         m = re.search(r"<situation>\s*([\s\S]*?)\s*</situation>", user)
@@ -178,6 +247,8 @@ class MockLLM(LLM):
 
 
 def get_llm(kind: Optional[str] = None) -> LLM:
+    from .config import load_env
+    load_env()
     kind = (kind or os.environ.get("RUSHI_LLM") or ("anthropic" if os.environ.get("ANTHROPIC_API_KEY") else "mock")).lower()
     if kind == "anthropic":
         return AnthropicLLM()

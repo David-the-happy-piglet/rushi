@@ -16,6 +16,8 @@ export ANTHROPIC_API_KEY=sk-...        # 用 Claude
 # 或者本地模型：export RUSHI_LLM=openai RUSHI_OPENAI_BASE=http://localhost:11434/v1 RUSHI_MODEL=qwen3:8b
 ```
 
+也可以把这些写进配置文件：`cp .env.example .env` 后填写（`.env` 已 git-ignore；也可放在 `~/.rushi/.env`）。支持任何 OpenAI 兼容接口，如 MiniMax、DeepSeek。
+
 ## 数据与代码隔离
 
 所有人格数据（`persona.db`、`speakers.json`、沙盒、导出、原始聊天记录）都放在**仓库之外**的 `$RUSHI_HOME`（默认 `~/.rushi`）：
@@ -81,6 +83,10 @@ rushi -w ta eval backtest                        # 决策回测（藏起已知�
 | 允许矛盾 | `contradictions` 表 + claim 上的 `contradicts`；反思阶段专门找矛盾；人格卡要求「一方面…另一方面…」 |
 | 人在变 | 风格卡按年份分统计；chat/ask 可指定 `--period` |
 | 不美化 | 抽取/反思/人格卡/决策四个 prompt 都明确要求保留不讨喜的特质；结构化决策路径只按证据权重算 |
+| 网状图谱 | 五层：原文 → 实体/事实 → 观察 → 特质 → 主题；特质之间有跨维度关系（导致/表现为/权衡/互相强化）；参考 Graphiti 的 episodic/entity/community 结构 |
+| 推导可追溯 | 每个特质记录 `based_on` + `reasoning` + 推理类型（归纳/因果/对比）；viewer 点特质即可一路展开到原文 |
+| 实体消解 | 「妈妈/我妈/母亲」合并为同一节点并保留别名；同一决定在不同材料里只记一个案例 |
+| 置信度 | 由代码按证据数、原文段数、证据类型、时期、是否有矛盾计算；单段材料最多 moderate |
 | 敏感维度 | J（童年/形成性经历）默认不进聊天与决策，只在后台可见（`--include-sensitive` 才开） |
 | 三层记忆 | ① 常驻人格卡+风格规则 ② 每轮检索原话/记忆/观察（char-bigram BM25，可插入 embedding） ③ 模型可回复 `[search: …]` 主动查 |
 | 小说不污染人格 | `sandbox create` 复制快照到独立 db；沙盒内 base 以只读打开，任何写入直接报错；没有自动回写，`promote()` 需手动且标记 `origin:fiction` |

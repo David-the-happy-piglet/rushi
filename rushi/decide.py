@@ -112,6 +112,8 @@ def decide(store: Store, llm: LLM, situation: str, period: Optional[tuple[int, i
     card = (store.artifact("persona_card") or {}).get("markdown", "（无人格卡）")
     user = (f"# 人格卡\n{card}\n\n# 相关的过去决定\n" + ("\n".join(d.payload for d in cases) or "- 无")
             + "\n\n# 相关观察\n" + ("\n".join(f"{d.id} {d.payload}" for d in claims) or "- 无")
+            + "\n\n# 图谱推导链（特质 ← 观察 ← 原文）\n"
+            + ("\n".join(r.graph_context(query, include_sensitive=include_sensitive, year_range=period)) or "- 无")
             + f"\n\n# 已登记的矛盾\n{con_text}\n\n# 情境\n{situation}\n\n<options>\n"
             + "\n".join(f"- {o}" for o in options) + "\n</options>")
     try:

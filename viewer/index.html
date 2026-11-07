@@ -2,66 +2,146 @@
 <html lang="zh"><head><meta charset="utf-8"><title>如是 · 人格图谱查看器</title>
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <style>
-:root{--bg:#f7f6f2;--fg:#1f1f1f;--muted:#777;--card:#fff;--line:#ddd;--accent:#8a5a2b;color-scheme:light dark}
-@media (prefers-color-scheme:dark){:root{--bg:#141414;--fg:#e8e6e1;--muted:#999;--card:#1e1e1e;--line:#333;--accent:#d9a066}}
+:root{--bg:#f7f6f2;--fg:#1f1f1f;--muted:#6f6d66;--card:#fff;--line:#d9d6cc;--accent:#8a5a2b;
+ --l0:#888780;--l1:#d85a30;--l2:#5f5e5a;--l3:#0f6e56;--l4:#534ab7;--con:#c0392b;--chg:#ba7517;--link:#1d9e75;color-scheme:light dark}
+@media (prefers-color-scheme:dark){:root:not([data-theme="light"]){--bg:#141414;--fg:#e8e6e1;--muted:#a3a19a;--card:#1e1e1e;--line:#3a3935;--accent:#d9a066;
+ --l0:#b4b2a9;--l1:#f0997b;--l2:#d3d1c7;--l3:#5dcaa5;--l4:#afa9ec;--con:#f09595;--chg:#ef9f27;--link:#5dcaa5}}
+:root[data-theme="dark"]{--bg:#141414;--fg:#e8e6e1;--muted:#a3a19a;--card:#1e1e1e;--line:#3a3935;--accent:#d9a066;
+ --l0:#b4b2a9;--l1:#f0997b;--l2:#d3d1c7;--l3:#5dcaa5;--l4:#afa9ec;--con:#f09595;--chg:#ef9f27;--link:#5dcaa5}
+*{box-sizing:border-box}
 body{margin:0;background:var(--bg);color:var(--fg);font:14px/1.5 -apple-system,"PingFang SC","Noto Sans CJK SC",sans-serif}
-header{padding:12px 16px;border-bottom:1px solid var(--line);display:flex;gap:12px;align-items:center;flex-wrap:wrap}
-main{display:grid;grid-template-columns:1fr 1fr;gap:0;height:calc(100vh - 58px)}
-@media (max-width:900px){main{grid-template-columns:1fr;height:auto}}
-#canvas{width:100%;height:100%;background:var(--bg)}
+header{padding:10px 16px;border-bottom:1px solid var(--line);display:flex;gap:12px;align-items:center;flex-wrap:wrap}
+main{display:grid;grid-template-columns:minmax(0,1fr) 380px;height:calc(100vh - 54px)}
+@media (max-width:900px){main{grid-template-columns:1fr;height:auto}#graph{height:60vh}}
+#graph{overflow:auto;position:relative}
 #side{overflow:auto;padding:12px 16px;border-left:1px solid var(--line)}
-.dim{margin:10px 0 4px;font-weight:600;color:var(--accent)}
-.claim{background:var(--card);border:1px solid var(--line);border-radius:8px;padding:8px 10px;margin:6px 0}
+svg text{font-size:11px;fill:var(--fg)}
+.band{fill:none;stroke:var(--line);stroke-dasharray:2 4}
+.bandlbl{fill:var(--muted)!important;font-size:12px!important}
+.node rect{stroke-width:1;cursor:pointer}
+.node.dim{opacity:.15}.edge.dim{opacity:.06}
+.node.sel rect{stroke-width:2.5}
+.edge{fill:none;stroke-width:1}
+.h{font-weight:600;color:var(--accent);margin:12px 0 4px}
+.card{background:var(--card);border:1px solid var(--line);border-radius:8px;padding:8px 10px;margin:6px 0}
 .meta{color:var(--muted);font-size:12px}.quote{color:var(--muted);font-size:12px;margin-top:4px}
-.tag{display:inline-block;font-size:11px;padding:0 6px;border:1px solid var(--line);border-radius:10px;margin-left:4px}
-.con{border-color:#c0392b}
+.tag{display:inline-block;font-size:11px;padding:0 6px;border:1px solid var(--line);border-radius:10px;margin:0 4px 0 0}
+.lnk{cursor:pointer;text-decoration:underline dotted}
+.legend span{display:inline-flex;align-items:center;gap:4px;margin-right:10px;font-size:12px;color:var(--muted)}
+.legend i{display:inline-block;width:18px;height:0;border-top:2px solid}
 input,select{font:inherit}
 </style></head><body>
 <header><strong>如是 · 图谱查看器</strong>
-<input type="file" id="file" accept=".json"> <span class="meta">选择 ~/.rushi/workspaces/&lt;名字&gt;/exports/graph.json（纯本地，不上传）</span>
+<input type="file" id="file" accept=".json">
 <select id="filter"><option value="">全部维度</option></select>
-<label><input type="checkbox" id="showRejected"> 显示已驳回</label></header>
-<main><canvas id="canvas"></canvas><div id="side"><p class="meta">载入文件后，左侧是节点图（可拖动），右侧按维度列出观察、证据和矛盾。</p></div></main>
+<label><input type="checkbox" id="showEp" checked> 原文层</label>
+<label><input type="checkbox" id="showOld"> 显示已被取代</label>
+<span class="legend"><span><i style="border-color:var(--link)"></i>特质关系</span><span><i style="border-color:var(--l1)"></i>事实</span>
+<span><i style="border-color:var(--con);border-top-style:dashed"></i>矛盾</span><span><i style="border-color:var(--chg);border-top-style:dashed"></i>变化</span></span>
+<span class="meta">纯本地，不上传。点节点看推导链。</span></header>
+<main><div id="graph"><p class="meta" style="padding:16px">选择 ~/.rushi/workspaces/&lt;名字&gt;/exports/graph.json</p></div>
+<div id="side"><p class="meta">从下往上：原文 → 事实 → 观察 → 特质 → 主题。点任意节点，高亮它的上下游推导链，并在这里显示依据。</p></div></main>
 <script>
-const DIM={A:"身份与背景",B:"人生时间线",C:"价值观与优先级",D:"世界观与立场",E:"道德判断",F:"人际关系模式",G:"感情观",H:"工作、金钱与风险",I:"兴趣与审美",J:"童年与形成性经历（敏感）",K:"压力与情绪",L:"认知与决策风格",M:"自我认知与叙事",N:"恐惧与渴望",O:"幽默与表达",P:"矛盾与两难",Q:"变化轨迹"};
-let G=null, nodes=[], links=[], drag=null;
-const canvas=document.getElementById('canvas'), ctx=canvas.getContext('2d');
-const sel=document.getElementById('filter'); for(const k in DIM){const o=document.createElement('option');o.value=k;o.textContent=k+' '+DIM[k];sel.appendChild(o)}
-document.getElementById('file').addEventListener('change',async e=>{G=JSON.parse(await e.target.files[0].text());build();render()});
-sel.addEventListener('change',()=>{build();render()}); document.getElementById('showRejected').addEventListener('change',render);
+let DIM={A:"身份与背景",B:"人生时间线",C:"价值观与优先级",D:"世界观与立场",E:"道德判断",F:"人际关系模式",G:"感情观",H:"工作、金钱与风险",I:"兴趣与审美",J:"童年与形成性经历（敏感）",K:"压力与情绪",L:"认知与决策风格",M:"自我认知与叙事",N:"恐惧与渴望",O:"幽默与表达",P:"矛盾与两难",Q:"变化轨迹"};
+const LAYER={Episode:0,Person:1,Event:1,Decision:1,Place:1,Thing:1,Observation:2,Trait:3,Theme:4};
+const LNAME=["L0 原文","L1 事实","L2 观察","L3 特质","L4 主题"];
+const REL={MENTIONS:"提到",SUPPORTS:"支撑",ABOUT:"关于",DERIVED_FROM:"推导自",SHOWN_IN:"体现在",MEMBER_OF:"属于",CONTRADICTS:"矛盾",CHANGED_TO:"后来变成",
+ CAUSES:"导致",MANIFESTS_AS:"表现为",REINFORCES:"互相强化",TRADES_OFF:"权衡",FAMILY_OF:"亲属",PARTNER_OF:"伴侣",FRIEND_OF:"朋友",COLLEAGUE_OF:"同事",
+ CARES_FOR:"照顾/在意",CONFLICT_WITH:"冲突",EXPERIENCED:"经历",PARTICIPATED_IN:"参与",DECIDED:"决定",CAUSED:"导致",BECAUSE_OF:"因为",LIVES_IN:"住在",MOVED_TO:"搬到",WORKS_AT:"工作于",OWNS:"拥有",RELATED_TO:"相关"};
+const TRAIT_RELS=new Set(["CAUSES","MANIFESTS_AS","REINFORCES","TRADES_OFF"]);
+const UP=new Set(["MENTIONS","SUPPORTS","DERIVED_FROM","ABOUT","MEMBER_OF","SHOWN_IN"]);
+const W=124,H=34,GX=14,BAND=104,RG=22,TOP=40,LEFT=70;
+let G=null,claims={},vis=[],edges=[],pos={},sel=null;
+const $=id=>document.getElementById(id);
+const sel_=$('filter'); for(const k in DIM){const o=document.createElement('option');o.value=k;o.textContent=k+' '+DIM[k];sel_.appendChild(o)}
+$('file').addEventListener('change',async e=>load(JSON.parse(await e.target.files[0].text())));
+for(const id of ['filter','showEp','showOld'])$(id).addEventListener('change',()=>{build();draw();});
+window.addEventListener('resize',()=>{if(G){build();draw()}});
+const src=new URLSearchParams(location.search).get('src'); if(src)fetch(src).then(r=>r.json()).then(load);
+function load(g){G=g;if(g.dimensions)DIM=Object.assign({},DIM,g.dimensions);claims={};for(const c of g.claims)claims[c.id]=c;sel=null;build();draw();side(null)}
+function cid(n){return (n.attrs||{}).claim_id}
+function alive(n){const c=claims[cid(n)];if(c&&(c.superseded_by||c.user_review==='rejected'))return false;if(n.type==='Theme'&&n.attrs.superseded)return false;return true}
 function build(){
-  const f=sel.value; const byId={};
-  nodes=G.nodes.filter(n=>!f||n.type!=='Observation'||n.attrs.dimension===f).map((n,i)=>{const o={...n,x:Math.random()*canvas.width,y:Math.random()*canvas.height,vx:0,vy:0};byId[n.id]=o;return o});
-  links=G.edges.filter(e=>byId[e.from_id]&&byId[e.to_id]).map(e=>({s:byId[e.from_id],t:byId[e.to_id],rel:e.rel,closed:!!e.valid_to||!!e.invalidated_by}));
-  resize(); for(let i=0;i<200;i++)step();
+  const f=sel_.value,ep=$('showEp').checked,old=$('showOld').checked;
+  vis=G.nodes.filter(n=>{if(n.attrs&&n.attrs.is_target)return false;if(!ep&&n.type==='Episode')return false;if(!old&&!alive(n))return false;
+    if(f&&(n.type==='Observation'||n.type==='Trait')){const c=claims[cid(n)];const ds=c&&c.derivation&&c.derivation.dimensions||[n.attrs.dimension];return ds.includes(f)}return true});
+  const ids=new Set(vis.map(n=>n.id));
+  edges=G.edges.filter(e=>ids.has(e.from_id)&&ids.has(e.to_id)&&(old||!e.expired_at));
+  const nb={};for(const e of edges){(nb[e.from_id]=nb[e.from_id]||[]).push(e.to_id);(nb[e.to_id]=nb[e.to_id]||[]).push(e.from_id)}
+  const rows=[[],[],[],[],[]];for(const n of vis)rows[LAYER[n.type]??1].push(n);
+  const key=n=>n.type==='Episode'?(n.attrs.when||'')+n.id:(n.attrs.dimension||n.type)+n.id;
+  rows.forEach(r=>r.sort((a,b)=>key(a)<key(b)?-1:1));
+  const idx={};const set=()=>rows.forEach(r=>r.forEach((n,i)=>idx[n.id]=i-(r.length-1)/2));set();
+  for(let s=0;s<6;s++){const order=s%2?[3,2,1,0,4]:[1,2,3,4,0];
+    for(const l of order){const r=rows[l];const bc=n=>{const ns=(nb[n.id]||[]).filter(m=>idx[m]!==undefined);return ns.length?ns.reduce((a,m)=>a+idx[m],0)/ns.length:idx[n.id]};
+      const b=Object.fromEntries(r.map(n=>[n.id,bc(n)]));r.sort((a,c)=>b[a.id]-b[c.id]);set()}}
+  // wrap each layer into sub-rows that fit the pane; bands stack L4 (top) → L0 (bottom)
+  const avail=Math.max(($('graph').clientWidth||900)-LEFT-20,4*(W+GX));const per=Math.max(4,Math.floor(avail/(W+GX)));
+  pos={};G._band=[];let y=TOP;
+  for(let l=4;l>=0;l--){const r=rows[l];const nsub=Math.max(1,Math.ceil(r.length/per));G._band[l]={y,h:nsub*(H+RG)};
+    for(let k=0;k<nsub;k++){const sub=r.slice(k*per,(k+1)*per);const off=(per-sub.length)*(W+GX)/2;
+      sub.forEach((n,i)=>pos[n.id]={x:LEFT+off+i*(W+GX),y:y+k*(H+RG),n})}
+    y+=nsub*(H+RG)+BAND-H-RG}
+  G._w=LEFT+per*(W+GX)+20;G._h=y;G._nb=nb;
 }
-function resize(){const r=canvas.getBoundingClientRect();canvas.width=r.width*devicePixelRatio;canvas.height=r.height*devicePixelRatio;ctx.setTransform(devicePixelRatio,0,0,devicePixelRatio,0,0)}
-function step(){const W=canvas.width/devicePixelRatio,H=canvas.height/devicePixelRatio;
-  for(const a of nodes){for(const b of nodes){if(a===b)continue;let dx=a.x-b.x,dy=a.y-b.y,d2=dx*dx+dy*dy+0.01,f=1200/d2;a.vx+=dx*f/Math.sqrt(d2);a.vy+=dy*f/Math.sqrt(d2)}
-    a.vx+=(W/2-a.x)*0.002;a.vy+=(H/2-a.y)*0.002}
-  for(const l of links){let dx=l.t.x-l.s.x,dy=l.t.y-l.s.y,d=Math.sqrt(dx*dx+dy*dy)+0.01,f=(d-90)*0.01;l.s.vx+=dx/d*f;l.s.vy+=dy/d*f;l.t.vx-=dx/d*f;l.t.vy-=dy/d*f}
-  for(const n of nodes){if(n===drag)continue;n.x+=n.vx*=0.6;n.y+=n.vy*=0.6;n.x=Math.max(10,Math.min(W-10,n.x));n.y=Math.max(10,Math.min(H-10,n.y))}}
-function draw(){const W=canvas.width/devicePixelRatio,H=canvas.height/devicePixelRatio;ctx.clearRect(0,0,W,H);
-  const fg=getComputedStyle(document.body).color;
-  for(const l of links){ctx.strokeStyle=l.closed?'#c0392b':'#999';ctx.setLineDash(l.closed?[4,3]:[]);ctx.beginPath();ctx.moveTo(l.s.x,l.s.y);ctx.lineTo(l.t.x,l.t.y);ctx.stroke()}
-  ctx.setLineDash([]);
-  for(const n of nodes){const col={Person:'#8a5a2b',Event:'#2e86de',Observation:'#7f8c8d',View:'#27ae60',Value:'#f39c12'}[n.type]||'#aaa';
-    ctx.fillStyle=col;ctx.beginPath();ctx.arc(n.x,n.y,n.type==='Person'?9:5,0,7);ctx.fill();
-    if(n.type!=='Observation'||nodes.length<60){ctx.fillStyle=fg;ctx.font='11px sans-serif';ctx.fillText(n.label.slice(0,14),n.x+8,n.y+4)}}}
-function loop(){if(nodes.length){step();draw()}requestAnimationFrame(loop)} loop();
-canvas.addEventListener('mousedown',e=>{const r=canvas.getBoundingClientRect(),x=e.clientX-r.left,y=e.clientY-r.top;drag=nodes.find(n=>Math.hypot(n.x-x,n.y-y)<10)||null});
-canvas.addEventListener('mousemove',e=>{if(!drag)return;const r=canvas.getBoundingClientRect();drag.x=e.clientX-r.left;drag.y=e.clientY-r.top});
-window.addEventListener('mouseup',()=>drag=null); window.addEventListener('resize',resize);
-function render(){if(!G)return;const side=document.getElementById('side'),f=sel.value,showRej=document.getElementById('showRejected').checked;
-  const cons=new Set(G.contradictions.flatMap(c=>[c.claim_a,c.claim_b]));let html='';
-  for(const k in DIM){if(f&&f!==k)continue;const cl=G.claims.filter(c=>c.dimension===k&&(showRej||c.user_review!=='rejected'));if(!cl.length)continue;
-    html+=`<div class="dim">${k} ${DIM[k]} <span class="meta">(${cl.length})</span></div>`;
-    for(const c of cl){const ev=(c.evidence||[])[0]||{};html+=`<div class="claim ${cons.has(c.id)?'con':''}">${esc(c.claim)}
-      <span class="tag">${c.strength}</span><span class="tag">conf ${c.confidence}</span><span class="tag">${c.user_review}</span>${c.kind==='reflection'?'<span class="tag">反思</span>':''}${(c.tags||[]).includes('ungrounded')?'<span class="tag">未落地</span>':''}
-      <div class="meta">${c.valid_from||'?'}${c.valid_to?' – '+c.valid_to:''} · ${ev.evidence_type||''} · ${c.id}</div>
-      ${ev.quote?`<div class="quote">「${esc(ev.quote)}」</div>`:''}</div>`}}
-  if(G.contradictions.length){html+='<div class="dim">矛盾登记</div>';for(const c of G.contradictions)html+=`<div class="claim con">${esc(c.description)}<div class="meta">${c.claim_a} ↔ ${c.claim_b} · aware=${c.aware} · ${esc(c.how_handled||'')}</div></div>`}
-  if(G.cases.length){html+='<div class="dim">决策案例</div>';for(const k of G.cases)html+=`<div class="claim"><b>${k.when||'?'}</b> ${esc(k.situation)}<div class="meta">选项: ${(k.options||[]).join(' / ')} → ${esc(k.choice)}；理由: ${esc(k.stated_reason||'')}</div></div>`}
-  side.innerHTML=html||'<p class="meta">没有内容</p>'}
-function esc(s){return String(s??'').replace(/[&<>]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;'}[c]))}
+function color(n){return `var(--l${LAYER[n.type]??1})`}
+function edgeStyle(e){if(e.rel==='CONTRADICTS')return['var(--con)','4 3',1.6];if(e.rel==='CHANGED_TO')return['var(--chg)','4 3',1.6];
+  if(TRAIT_RELS.has(e.rel))return['var(--link)','',1.6];const a=pos[e.from_id],b=pos[e.to_id];
+  if(a&&b&&a.y===b.y&&LAYER[a.n.type]===1)return['var(--l1)','',1.2];return['var(--line)','',1]}
+function draw(){if(!G)return;const g=$('graph');const h=G._h;
+  let s=`<svg width="${G._w}" height="${h}" xmlns="http://www.w3.org/2000/svg"><defs><marker id="ar" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="5" markerHeight="5" orient="auto"><path d="M1 1L9 5L1 9" fill="none" stroke="context-stroke" stroke-width="1.5"/></marker></defs>`;
+  for(let l=0;l<5;l++){const b=G._band[l];s+=`<text class="bandlbl" x="6" y="${b.y+H/2+4}">${LNAME[l]}</text>`;
+    if(l)s+=`<line class="band" x1="${LEFT-6}" x2="${G._w}" y1="${b.y+b.h+(BAND-H-RG)/2-4}" y2="${b.y+b.h+(BAND-H-RG)/2-4}"/>`}
+  const hl=sel?chain(sel):null;
+  for(const e of edges){const a=pos[e.from_id],b=pos[e.to_id];if(!a||!b)continue;const[c,d,w]=edgeStyle(e);let p;
+    if(a.y===b.y){const x1=a.x+W/2,x2=b.x+W/2,dy=Math.min(80,18+Math.abs(x2-x1)/6);p=`M${x1} ${a.y} Q${(x1+x2)/2} ${a.y-dy} ${x2} ${b.y}`}
+    else{const up=a.y>b.y;p=`M${a.x+W/2} ${up?a.y:a.y+H} L${b.x+W/2} ${up?b.y+H:b.y}`}
+    const dim=hl&&!(hl.has(e.from_id)&&hl.has(e.to_id));
+    s+=`<path class="edge${dim?' dim':''}" d="${p}" stroke="${c}" stroke-width="${w}" ${d?`stroke-dasharray="${d}"`:''} ${e.rel!=='ABOUT'&&e.rel!=='MENTIONS'?'marker-end="url(#ar)"':''}><title>${REL[e.rel]||e.rel}${e.attrs&&(e.attrs.fact||e.attrs.explanation||e.attrs.description)?'：'+esc(e.attrs.fact||e.attrs.explanation||e.attrs.description):''}</title></path>`}
+  for(const id in pos){const{x,y,n}=pos[id];const c=claims[cid(n)];const dim=hl&&!hl.has(id);const d=n.attrs&&n.attrs.dimension;
+    const lbl=(d?d+' ':'')+(n.type==='Episode'?(n.attrs.when||'')+' '+(n.attrs.kind==='chat'?'聊天':n.attrs.reporter||''):n.label);
+    s+=`<g class="node${dim?' dim':''}${sel===id?' sel':''}" data-id="${id}"><rect x="${x}" y="${y}" width="${W}" height="${H}" rx="6" fill="var(--card)" stroke="${color(n)}" ${alive(n)?'':'stroke-dasharray="3 2"'}/>
+      <text x="${x+8}" y="${y+H/2+4}">${esc(trunc(lbl,10))}</text><title>${esc(n.label)}${c?' · conf '+c.confidence:''}</title></g>`}
+  g.innerHTML=s+'</svg>';
+  g.querySelectorAll('.node').forEach(el=>el.addEventListener('click',()=>{sel=sel===el.dataset.id?null:el.dataset.id;draw();side(sel)}));
+}
+function chain(id){const out=new Set([id]);const n0=pos[id]&&pos[id].n;
+  const walk=(start,dir)=>{const st=[start];while(st.length){const u=st.pop();for(const e of edges){let v=null;
+    if(dir<0&&e.from_id===u&&UP.has(e.rel)&&LAYER[nodeOf(e.to_id).type]<=LAYER[nodeOf(u).type])v=e.to_id;
+    if(dir<0&&e.to_id===u&&UP.has(e.rel)&&LAYER[nodeOf(e.from_id).type]<LAYER[nodeOf(u).type])v=e.from_id;
+    if(dir>0&&e.to_id===u&&UP.has(e.rel)&&LAYER[nodeOf(e.from_id).type]>LAYER[nodeOf(u).type])v=e.from_id;
+    if(dir>0&&e.from_id===u&&(e.rel==='MEMBER_OF'||e.rel==='DERIVED_FROM')&&LAYER[nodeOf(e.to_id).type]>LAYER[nodeOf(u).type])v=e.to_id;
+    if(v&&!out.has(v)){out.add(v);st.push(v)}}}};
+  walk(id,-1);walk(id,1);
+  for(const e of edges){if(e.from_id===id||e.to_id===id)out.add(e.from_id===id?e.to_id:e.from_id)}
+  return out}
+function nodeOf(id){return (pos[id]&&pos[id].n)||{type:'Person'}}
+function nlink(id,txt){return `<span class="lnk" onclick="pick('${id}')">${esc(txt)}</span>`}
+function pick(id){if(!pos[id])return;sel=id;draw();side(id);const p=pos[id];$('graph').scrollTo({left:p.x-200,top:p.y-150,behavior:'smooth'})}
+function claimNode(cid_){return 'trt:'+cid_ in pos?'trt:'+cid_:'obs:'+cid_}
+function quoteOf(c){const e=(c.evidence||[])[0];return e&&e.quote?`<div class="quote">「${esc(e.quote)}」 · ${e.evidence_type}${e.grounded===false?' · 未落地':''}</div>`:''}
+function side(id){const el=$('side');if(!G)return;if(!id){el.innerHTML=overview();return}
+  const n=G.nodes.find(x=>x.id===id);const c=claims[cid(n)];let h=`<div class="h">${LNAME[LAYER[n.type]??1]} · ${n.type}</div><div class="card"><b>${esc(n.label)}</b>`;
+  if(c)h+=`<div style="margin-top:4px"><span class="tag">${c.dimension} ${DIM[c.dimension]||''}</span><span class="tag">${c.strength}</span><span class="tag">conf ${c.confidence}</span><span class="tag">${c.user_review}</span>${(c.tags||[]).includes('sensitive')?'<span class="tag">敏感</span>':''}${c.superseded_by?'<span class="tag">已被取代</span>':''}</div><div class="meta">${c.valid_from||'?'}${c.valid_to?' – '+c.valid_to:''} · ${c.id}</div>`;
+  h+='</div>';
+  if(n.type==='Trait'&&c){const d=c.derivation||{};h+=`<div class="h">推导过程（${{generalization:'归纳',causal:'因果',contrast:'对比'}[d.inference]||d.inference||''}）</div><div class="card">${esc(d.reasoning||'（无）')}`;
+    if(d.score)h+=`<div class="meta">置信度由代码计算：${d.score.n_supports} 条依据，${d.score.n_episodes} 段原文，证据类型 ${d.score.evidence_types.join('/')}，时期 ${d.score.periods.join('、')||'未知'}${d.score.contradicted?'，有矛盾 ×0.85':''}，上限 ${d.score.cap}</div>`;
+    h+='</div><div class="h">依据</div>';for(const b of d.based_on||[]){const s=claims[b];if(s)h+=`<div class="card">${nlink(claimNode(b),s.claim)} <span class="meta">[${s.dimension}·conf ${s.confidence}]</span>${quoteOf(s)}</div>`}}
+  if(n.type==='Observation'&&c){h+=`<div class="h">原文</div><div class="card">${quoteOf(c)||'—'}</div>`;const d=c.derivation||{};
+    if((d.facts||[]).length){h+='<div class="h">依据的事实</div>';for(const f of d.facts){const e=G.edges.find(x=>x.id===f);if(e)h+=`<div class="card">${nlink(e.from_id,lab(e.from_id))} —${REL[e.rel]||e.rel}→ ${nlink(e.to_id,lab(e.to_id))}<div class="meta">${esc(e.attrs.fact||'')}</div></div>`}}
+    if(d.contradiction_note)h+=`<div class="card meta">矛盾说明：${esc(d.contradiction_note)}</div>`}
+  if(n.type==='Theme')h+=`<div class="card">${esc(n.attrs.summary||'')}<div class="meta">跨维度：${(n.attrs.dimensions||[]).join(' ')}</div></div>`;
+  if(n.type==='Episode')h+=`<div class="card"><div class="meta">${n.attrs.reporter} · ${n.attrs.when||'?'}</div><div style="white-space:pre-wrap;font-size:12px">${esc(n.attrs.excerpt||'')}</div></div>`;
+  if(LAYER[n.type]===1&&n.attrs.aliases&&n.attrs.aliases.length)h+=`<div class="card meta">别名：${n.attrs.aliases.map(esc).join('、')}</div>`;
+  const groups={};for(const e of G.edges){if(e.expired_at&&!$('showOld').checked)continue;if(e.from_id!==id&&e.to_id!==id)continue;const out=e.from_id===id;const k=(out?'→ ':'← ')+(REL[e.rel]||e.rel);(groups[k]=groups[k]||[]).push([out?e.to_id:e.from_id,e])}
+  for(const k in groups){h+=`<div class="h">${k} <span class="meta">(${groups[k].length})</span></div>`;for(const[o,e]of groups[k].slice(0,30)){const x=e.attrs||{};
+    h+=`<div class="card">${nlink(o,lab(o))}${x.fact||x.explanation||x.description?`<div class="meta">${esc(x.fact||x.explanation||x.description)}</div>`:''}${x.quote?`<div class="quote">「${esc(x.quote)}」</div>`:''}</div>`}}
+  el.innerHTML=h}
+function lab(id){const n=G.nodes.find(x=>x.id===id);return n?(n.type==='Episode'?'原文 '+(n.attrs.when||'')+' '+n.label:n.label):id}
+function overview(){const t=G.themes||[];let h='<div class="h">主题</div>'+(t.map(x=>`<div class="card">${nlink(x.id,x.name)}<div class="meta">${esc(x.summary)} · ${x.dimensions.join(' ')}</div></div>`).join('')||'<p class="meta">无</p>');
+  const cons=G.contradictions||[];h+='<div class="h">矛盾与变化</div>'+(cons.map(c=>{const a=claims[c.claim_a],b=claims[c.claim_b];return a&&b?`<div class="card">${c.kind==='change'?'<span class="tag">变化</span>':'<span class="tag">矛盾</span>'}${esc(c.description)}<div class="meta">${nlink(claimNode(a.id),a.claim)} ↔ ${nlink(claimNode(b.id),b.claim)}</div></div>`:''}).join('')||'<p class="meta">无</p>');
+  h+='<div class="h">决策案例</div>'+((G.cases||[]).map(k=>`<div class="card">${k.entity_id?nlink(k.entity_id,k.situation):esc(k.situation)}<div class="meta">${k.when||'?'} · 选项 ${(k.options||[]).join(' / ')} → ${esc(k.choice)}；理由：${esc(k.stated_reason||'')}</div></div>`).join('')||'<p class="meta">无</p>');
+  return h}
+function trunc(s,n){s=String(s||'');return s.length>n?s.slice(0,n)+'…':s}
+function esc(s){return String(s??'').replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]))}
 </script></body></html>

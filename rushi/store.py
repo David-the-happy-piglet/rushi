@@ -18,7 +18,7 @@ from pathlib import Path
 from typing import Any, Iterable, Optional
 
 from .schema import (Chunk, Claim, Contradiction, DecisionCase, Edge, Node, Source, Utterance,
-                     claim_from_dict, now_iso)
+                     _known, claim_from_dict, now_iso)
 
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS sources   (id TEXT PRIMARY KEY, kind TEXT, data TEXT);
@@ -39,6 +39,8 @@ CREATE TABLE IF NOT EXISTS log       (id INTEGER PRIMARY KEY AUTOINCREMENT, at T
 CREATE INDEX IF NOT EXISTS idx_utt_session ON utterances(session_id);
 CREATE INDEX IF NOT EXISTS idx_claims_dim ON claims(dimension);
 CREATE INDEX IF NOT EXISTS idx_edges_from ON edges(from_id);
+CREATE INDEX IF NOT EXISTS idx_edges_to ON edges(to_id);
+CREATE INDEX IF NOT EXISTS idx_nodes_type ON nodes(type);
 """
 
 
@@ -157,20 +159,30 @@ class Store:
             sql += " WHERE type=?"; params.append(type_)
         return [Node(**json.loads(r["data"])) for r in self.conn.execute(sql, params)]
 
+    def get_node(self, nid: str) -> Optional[Node]:
+        r = self.conn.execute("SELECT data FROM nodes WHERE id=?", (nid,)).fetchone()
+        return Node(**json.loads(r["data"])) if r else None
+
+    def get_edge(self, eid: str) -> Optional[Edge]:
+        r = self.conn.execute("SELECT data FROM edges WHERE id=?", (eid,)).fetchone()
+        return Edge(**_known(Edge, json.loads(r["data"]))) if r else None
+
     def add_edge(self, e: Edge):
         self._exec("INSERT OR REPLACE INTO edges VALUES (?,?,?,?,?,?)",
                    (e.id, e.from_id, e.rel, e.to_id, e.valid_to, json.dumps(asdict(e), ensure_ascii=False)))
 
     def edges(self, from_id: Optional[str] = None, rel: Optional[str] = None,
-              active_only: bool = False) -> list[Edge]:
+              active_only: bool = False, to_id: Optional[str] = None) -> list[Edge]:
         sql, params = "SELECT data FROM edges WHERE 1=1", []
         if from_id:
             sql += " AND from_id=?"; params.append(from_id)
+        if to_id:
+            sql += " AND to_id=?"; params.append(to_id)
         if rel:
             sql += " AND rel=?"; params.append(rel)
-        out = [Edge(**json.loads(r["data"])) for r in self.conn.execute(sql, params)]
+        out = [Edge(**_known(Edge, json.loads(r["data"]))) for r in self.conn.execute(sql, params)]
         if active_only:
-            out = [e for e in out if e.invalidated_by is None]
+            out = [e for e in out if e.invalidated_by is None and e.expired_at is None]
         return out
 
     # ------------------------------------------------------------------ cases
@@ -178,14 +190,15 @@ class Store:
         self._exec("INSERT OR REPLACE INTO cases VALUES (?,?)", (c.id, json.dumps(asdict(c), ensure_ascii=False)))
 
     def cases(self) -> list[DecisionCase]:
-        return [DecisionCase(**json.loads(r["data"])) for r in self.conn.execute("SELECT data FROM cases")]
+        return [DecisionCase(**_known(DecisionCase, json.loads(r["data"]))) for r in self.conn.execute("SELECT data FROM cases")]
 
     # --------------------------------------------------------- contradictions
     def add_contradiction(self, c: Contradiction):
         self._exec("INSERT OR REPLACE INTO contradictions VALUES (?,?)", (c.id, json.dumps(asdict(c), ensure_ascii=False)))
 
     def contradictions(self) -> list[Contradiction]:
-        return [Contradiction(**json.loads(r["data"])) for r in self.conn.execute("SELECT data FROM contradictions")]
+        return [Contradiction(**_known(Contradiction, json.loads(r["data"])))
+                for r in self.conn.execute("SELECT data FROM contradictions")]
 
     # -------------------------------------------------------------- artifacts
     def save_artifact(self, key: str, data: Any) -> int:
