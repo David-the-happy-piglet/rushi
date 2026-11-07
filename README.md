@@ -1,64 +1,70 @@
 # 如是 (rushi)
 
-> 「如果是ta的话，也一定会这么做的。」
-> 如是我闻 —— 记下你所听到的，如其所是。
+> "If it were them, they would surely have done the same."
+> 如是我闻 ("Thus have I heard"): write down what you heard, as it was.
 
-把一个人留在你心里的那部分，整理成带时间线的记忆图谱；然后可以和「记忆中的ta」聊天，也可以问「如果是ta，会怎么做」。
+rushi takes the part of a person that stays with you and organizes it into a memory graph with a timeline. You can then chat with "them as you remember them", or ask "what would they do in this situation?"
 
-**零依赖**：纯 Python 标准库（SQLite + urllib）。有 `ANTHROPIC_API_KEY` 就用 Claude；也可以接 Ollama/vLLM 等本地模型；没有任何 key 时用内置的 `mock` 模型跑通流程。
+The name 如是 combines 如果是ta ("if it were them") with 如是我闻 ("thus have I heard"). The idea comes from *Frieren: Beyond Journey's End*: "Himmel would have done the same."
 
-## 安装
+**Zero dependencies**: pure Python standard library (SQLite + urllib). Set `ANTHROPIC_API_KEY` to use Claude. You can also point it at a local model such as Ollama or vLLM. With no key at all, the built-in `mock` model runs the whole pipeline offline.
+
+The tool is built for Chinese-language material. Prompts, sample data, and generated persona text are in Chinese.
+
+## Install
 
 ```bash
 cd rushi
-pip install -e .          # 或者不安装，直接 python -m rushi.cli ...
-export ANTHROPIC_API_KEY=sk-...        # 用 Claude
-# 或者本地模型：export RUSHI_LLM=openai RUSHI_OPENAI_BASE=http://localhost:11434/v1 RUSHI_MODEL=qwen3:8b
+pip install -e .          # or skip installing and run python -m rushi.cli ...
+export ANTHROPIC_API_KEY=sk-...        # use Claude
+# or a local model: export RUSHI_LLM=openai RUSHI_OPENAI_BASE=http://localhost:11434/v1 RUSHI_MODEL=qwen3:8b
 ```
 
-也可以把这些写进配置文件：`cp .env.example .env` 后填写（`.env` 已 git-ignore；也可放在 `~/.rushi/.env`）。支持任何 OpenAI 兼容接口，如 MiniMax、DeepSeek。
+You can also put these settings in a config file: `cp .env.example .env` and fill it in. `.env` is git-ignored, and `~/.rushi/.env` works too. Real environment variables take precedence. Any OpenAI-compatible API works, for example MiniMax or DeepSeek.
 
-## 数据与代码隔离
+## Keeping data out of the repo
 
-所有人格数据（`persona.db`、`speakers.json`、沙盒、导出、原始聊天记录）都放在**仓库之外**的 `$RUSHI_HOME`（默认 `~/.rushi`）：
+All persona data lives **outside the repository**, under `$RUSHI_HOME` (default `~/.rushi`). That includes `persona.db`, `speakers.json`, sandboxes, exports, and raw chat logs.
 
 ```
 ~/.rushi/
-  raw/                     原始聊天记录 / 叙事材料
-  workspaces/<名字>/       一个人格一个 workspace：persona.db, speakers.json, sandboxes/, exports/
+  raw/                     raw chat logs / narrative material
+  workspaces/<name>/       one workspace per persona: persona.db, speakers.json, sandboxes/, exports/
 ```
 
-- `-w 名字` → `$RUSHI_HOME/workspaces/名字`；`-w ./路径` 或绝对路径则按原样使用。
-- CLI **拒绝**在代码仓库内建 workspace（确需时设 `RUSHI_ALLOW_IN_REPO=1`）。
-- `.gitignore` 兜底屏蔽 `*.db`、`speakers.json`（`examples/` 除外）、`exports/` 等。
-- 仓库里只有 `examples/` 中虚构的样例人物「阿泽」，用于测试。
+- `-w name` resolves to `$RUSHI_HOME/workspaces/name`. `-w ./path` or an absolute path is used as given.
+- The CLI **refuses** to create a workspace inside the code repository. Set `RUSHI_ALLOW_IN_REPO=1` if you really need to.
+- As a safety net, `.gitignore` blocks `*.db`, `speakers.json` (except in `examples/`), `exports/`, and similar files.
+- The only persona in the repo is 阿泽 in `examples/`, a fictional character used for tests.
 
-## 阶段 0–4：建立单一人格的完整路径
+## Stages 0–4: building a single persona end to end
 
 ```bash
-rushi -w ta init                                 # 0. 建 workspace（~/.rushi/workspaces/ta），生成 speakers.json 模板
-rushi -w ta inspect-chat chat.txt                # 看聊天记录里有哪些说话人
-#    编辑 ~/.rushi/workspaces/ta/speakers.json：target = ta 的名字；others = 其他人及其与 ta 的关系；aliases = 脱敏别名
-rushi -w ta ingest-chat chat.txt                 # 1. 导入聊天（切会话、合并连发、脱敏、标记哪边是 ta）
-rushi -w ta ingest-text about.md --reporter user # 1. 导入第三人称描述 / 访谈 / 日记（见格式说明）
-rushi -w ta add-fact "他其实很怕狗" --dimension I --year 2018   # 随时补一条事实
-rushi -w ta style                                # 2. 风格卡：统计 + 规则（版本化）
-rushi -w ta extract                              # 3. 逐块抽取 → 带证据的观察、决策案例、图谱
-rushi -w ta coverage                             # 哪些维度证据薄
-rushi -w ta review list                          # 人工审核队列（敏感/未落地/矛盾 优先）
-rushi -w ta review confirmed clm_xxx             #    confirmed | rejected | edited --text "改写后的说法"
-rushi -w ta reflect                              # 3. 反思：跨观察综合 + 登记矛盾（从不删除）
-rushi -w ta persona                              # 3. 核心人格卡（常驻上下文，默认排除敏感维度）
-rushi -w ta chat --relation close_friend --period 2018-2020     # 4. 以 ta 的身份聊天
-rushi -w ta ask "外地 offer 薪资高40% 但妈妈身体不好。选项: 接受/拒绝/拖着"   # 4. 如果是 ta 会怎么做
-rushi -w ta export-graph                         # 导出 graph.json → 用 viewer/index.html 打开浏览
-rushi -w ta eval blind -n 20                     # 风格盲测表；填好后 rushi eval score
-rushi -w ta eval backtest                        # 决策回测（藏起已知决定看能否预测）
+rushi -w ta init                                 # 0. create the workspace (~/.rushi/workspaces/ta) and a speakers.json template
+rushi -w ta inspect-chat chat.txt                # list the speakers in a chat log
+#    edit ~/.rushi/workspaces/ta/speakers.json: target = their name; others = other people and their relation to them; aliases = anonymized names
+rushi -w ta ingest-chat chat.txt                 # 1. import a chat (split sessions, merge bursts, anonymize, mark which side is them)
+rushi -w ta ingest-text about.md --reporter user # 1. import third-person descriptions / interviews / diaries (format below)
+rushi -w ta add-fact "他其实很怕狗" --dimension I --year 2018   # add a single fact at any time
+rushi -w ta style                                # 2. style card: statistics + rules (versioned)
+rushi -w ta extract                              # 3. extract chunk by chunk → evidence-backed observations, decision cases, graph
+rushi -w ta coverage                             # which dimensions have thin evidence
+rushi -w ta review list                          # human review queue (sensitive / ungrounded / contradictory first)
+rushi -w ta review confirmed clm_xxx             #    confirmed | rejected | edited --text "rewritten claim"
+rushi -w ta reflect                              # 3. reflect: derive traits across observations + record contradictions (never deletes)
+rushi -w ta persona                              # 3. core persona card (always in context; sensitive dimensions excluded by default)
+rushi -w ta chat --relation close_friend --period 2018-2020     # 4. chat as them
+rushi -w ta ask "外地 offer 薪资高40% 但妈妈身体不好。选项: 接受/拒绝/拖着"   # 4. what would they do
+rushi -w ta export-graph                         # export graph.json → open it in viewer/index.html
+rushi -w ta eval blind -n 20                     # style blind test sheet; fill it in, then run rushi eval score
+rushi -w ta eval backtest                        # decision backtest (hide known decisions and try to predict them)
 ```
 
-试跑（离线）：`RUSHI_LLM=mock python -m unittest tests.test_pipeline -v`，或用 `examples/` 里的样例走一遍上面的命令。
+Offline trial run: `RUSHI_LLM=mock python -m unittest tests.test_pipeline -v`, or walk through the commands above with the sample data in `examples/`.
 
-## 叙事材料的格式
+## Narrative material format
+
+Each section starts with a header line. The sample text below is the kind of Chinese material the tool expects.
 
 ```
 --- year: 2016 ; relation: close_friend ; reporter: user ---
@@ -71,56 +77,60 @@ rushi -w ta eval backtest                        # 决策回测（藏起已知�
 我这个人吧，从小就不太会表达……
 ```
 
-`reporter` 决定证据类型：`self` 可以是 self_report/behavior；`user` 和 `third:*` 只能是 other_report（代码强制，模型声明无效）。
+`reporter` sets the evidence type. `self` may produce self_report or behavior; `user` and `third:*` can only produce other_report. This is enforced in code, so whatever the model claims is ignored.
 
-## 设计要点（和计划一一对应）
+## Design principles and how the code implements them
 
-| 原则 | 代码里的落实 |
+| Principle | Implementation |
 |---|---|
-| 分清哪边是 ta | `speakers.json` 显式指定，不猜；未知说话人会被提示 |
-| 证据优先 | 每条 claim 必须带 quote；quote 会和原文比对（`extract.ground`），对不上就标 `ungrounded`、置信度减半、进审核队列 |
-| 时间是一等公民 | claim/edge 都有 `valid_from/valid_to`（ta 人生里何时成立）+ `recorded_at`（我们何时得知）；变化=关闭旧边，不删除 |
-| 允许矛盾 | `contradictions` 表 + claim 上的 `contradicts`；反思阶段专门找矛盾；人格卡要求「一方面…另一方面…」 |
-| 人在变 | 风格卡按年份分统计；chat/ask 可指定 `--period` |
-| 不美化 | 抽取/反思/人格卡/决策四个 prompt 都明确要求保留不讨喜的特质；结构化决策路径只按证据权重算 |
-| 网状图谱 | 五层：原文 → 实体/事实 → 观察 → 特质 → 主题；特质之间有跨维度关系（导致/表现为/权衡/互相强化）；参考 Graphiti 的 episodic/entity/community 结构 |
-| 推导可追溯 | 每个特质记录 `based_on` + `reasoning` + 推理类型（归纳/因果/对比）；viewer 点特质即可一路展开到原文 |
-| 实体消解 | 「妈妈/我妈/母亲」合并为同一节点并保留别名；同一决定在不同材料里只记一个案例 |
-| 置信度 | 由代码按证据数、原文段数、证据类型、时期、是否有矛盾计算；单段材料最多 moderate |
-| 敏感维度 | J（童年/形成性经历）默认不进聊天与决策，只在后台可见（`--include-sensitive` 才开） |
-| 三层记忆 | ① 常驻人格卡+风格规则 ② 每轮检索原话/记忆/观察（char-bigram BM25，可插入 embedding） ③ 模型可回复 `[search: …]` 主动查 |
-| 小说不污染人格 | `sandbox create` 复制快照到独立 db；沙盒内 base 以只读打开，任何写入直接报错；没有自动回写，`promote()` 需手动且标记 `origin:fiction` |
-| 评估 | 盲测（真实 vs 生成，50% = 分不出）；决策回测（准确率、给真实选择的平均概率、随机基线） |
+| Know which side is them | `speakers.json` says so explicitly; nothing is guessed, and unknown speakers are flagged |
+| Evidence first | Every claim must carry a quote, which is checked against the source (`extract.ground`). A mismatch marks it `ungrounded`, halves its confidence, and sends it to the review queue |
+| Time is first-class | Claims and edges have `valid_from/valid_to` (when it held in their life) plus `recorded_at` (when we learned it). A change closes the old edge; nothing is deleted |
+| Contradictions are allowed | A `contradictions` table plus `contradicts` on claims. Reflection looks for contradictions explicitly, and the persona card is written as "on one hand… on the other…" |
+| People change | Style statistics are split by year; chat and ask accept `--period` |
+| No idealizing | The extract, reflect, persona-card, and decision prompts all require keeping unflattering traits. The structured decision path weighs evidence only |
+| Networked graph | Five layers: source text → entities/facts → observations → traits → themes. Traits have cross-dimension relations (causes / manifests as / trades off / reinforces), following Graphiti's episodic/entity/community structure |
+| Traceable derivation | Every trait records `based_on`, `reasoning`, and an inference type (generalization / causal / contrast). Clicking a trait in the viewer expands its chain down to the source text |
+| Entity resolution | 妈妈 / 我妈 / 母亲 (all "mom") merge into one node and keep the aliases. The same decision found in different materials is recorded as one case |
+| Confidence | Computed in code from the number of supports, number of source passages, evidence types, periods, and contradictions. Material from a single passage is capped at moderate |
+| Sensitive dimension | J (childhood / formative experiences) stays out of chat and decisions by default and is visible only in the backstage views (`--include-sensitive` turns it on) |
+| Three memory tiers | ① a resident persona card + style rules ② per-turn retrieval of quotes, memories, and observations (char-bigram BM25, pluggable embeddings) ③ the model can reply `[search: …]` to look things up itself |
+| Fiction never pollutes the persona | `sandbox create` copies a snapshot into a separate db. Inside the sandbox the base is opened read-only and any write raises an error. There is no automatic write-back; `promote()` is manual and tags results `origin:fiction` |
+| Evaluation | Blind test (real vs generated; 50% means indistinguishable) and decision backtest (accuracy, mean probability given to the real choice, random baseline) |
 
-## 目录
+## Layout
 
 ```
 rushi/
 ├── rushi/
-│   ├── schema.py      数据模型 + 17 个人格维度
-│   ├── store.py       SQLite（从不删除；readonly 模式）
-│   ├── ingest/chat.py 聊天解析（csv/json/txt）、会话与连发切分、说话人映射
-│   ├── ingest/narrative.py 叙事材料切块、脱敏、reporter 规则
-│   ├── llm.py         Anthropic / OpenAI 兼容(本地) / Mock
-│   ├── extract.py     逐块抽取 + 证据落地校验 + 图谱写入
-│   ├── style.py       风格统计 + 风格卡
-│   ├── retrieve.py    离线混合检索（可插入 embedding，RRF 融合）
-│   ├── persona.py     反思、矛盾、人格卡、审核队列、覆盖率
-│   ├── chat.py        以 ta 聊天（三层记忆）
-│   ├── decide.py      如果是 ta 会怎么做（结构化 + 叙事双路径）
-│   ├── sandbox.py     小说沙盒（单向隔离）
-│   ├── evaluate.py    盲测、回测
+│   ├── schema.py      data model, graph layers, and the 17 persona dimensions
+│   ├── store.py       SQLite (never deletes; read-only mode)
+│   ├── config.py      .env loading
+│   ├── ingest/chat.py chat parsing (csv/json/txt), session and burst splitting, speaker mapping
+│   ├── ingest/narrative.py narrative chunking, anonymization, reporter rules
+│   ├── llm.py         Anthropic / OpenAI-compatible (local) / Mock
+│   ├── extract.py     per-chunk extraction + grounding check + graph writes
+│   ├── resolve.py     entity resolution and dedup
+│   ├── scoring.py     confidence computed from evidence
+│   ├── themes.py      theme clustering (label propagation)
+│   ├── style.py       style statistics + style card
+│   ├── retrieve.py    offline hybrid retrieval (pluggable embeddings, RRF fusion) + graph derivation chains
+│   ├── persona.py     reflection, contradictions, persona card, review queue, coverage
+│   ├── chat.py        chat as them (three memory tiers)
+│   ├── decide.py      what would they do (structured + narrative paths)
+│   ├── sandbox.py     fiction sandbox (one-way isolation)
+│   ├── evaluate.py    blind test, backtest
 │   └── cli.py
-├── prompts/           所有 prompt 都是可编辑的 .md
-├── viewer/index.html  纯本地的图谱/观察浏览器
-├── examples/          样例聊天、叙事、speakers.json
+├── prompts/           every prompt is an editable .md file
+├── viewer/index.html  local-only graph / observation browser
+├── examples/          sample chat, narrative, speakers.json
 └── tests/test_pipeline.py
 ```
 
-## 下一步（没做的）
+## Not done yet
 
-- 向量检索：实现 `retrieve.Embedder`（如 bge-m3），`Retriever(store, embedder=...)` 即可混合检索
-- 微信等平台的专用解析器（现在是通用 csv/json/txt）
-- 后台 Web 界面：目前是 CLI + 静态查看器
-- 结构化决策路径里的价值权重目前由 claim 强度×置信度推导，还没有联合分析式的主动提问来校准
-- 多人格沙盒目前只有「ta + 一个描述出来的角色」的最小场景循环，导演层/叙事层只有雏形
+- Vector retrieval: implement `retrieve.Embedder` (e.g. bge-m3), then `Retriever(store, embedder=...)` gives hybrid retrieval
+- Dedicated parsers for WeChat and other platforms (currently generic csv/json/txt)
+- A backstage web UI: currently CLI + static viewer
+- Value weights in the structured decision path come from claim strength × confidence; there is no conjoint-style active questioning to calibrate them yet
+- The multi-persona sandbox is a minimal scene loop ("them + one described character"); the director and narrative layers are only sketched
